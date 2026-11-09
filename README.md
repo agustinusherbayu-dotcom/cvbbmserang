@@ -17,7 +17,7 @@ This project is a responsive internal company management application for BBM. It
 - Audit logging for authentication and operational activity
 - PWA support for installation on desktop and mobile devices
 - Persistent Neon PostgreSQL database
-- Optional private Cloudflare R2 storage for documents and transaction attachments
+- Private document and transaction attachments, stored in Neon for files up to 3 MB or optionally in Cloudflare R2
 - PostgreSQL-backed sessions suitable for serverless instances
 
 ## Initial Direktur account
@@ -45,7 +45,7 @@ Configure these for local development and in Vercel Project Settings > Environme
 - `R2_BUCKET_NAME`: private R2 bucket name (optional)
 - `R2_ENDPOINT`: optional custom S3 endpoint; defaults to the account's Cloudflare R2 endpoint
 
-If you configure R2, create the bucket without public access and use an API token limited to that bucket. Documents are stored under private object keys and only served through 60-second signed downloads after the app checks the Direktur session. Without R2, the app works for other workflows and explicitly disables file attachments in the UI.
+Attachments up to 3 MB are stored in Neon PostgreSQL when R2 is not configured. If you configure R2, create the bucket without public access and use an API token limited to that bucket; new uploads use R2 and are served through 60-second signed downloads after the app checks the Direktur session. Neon-stored files are also served only through authenticated Direktur endpoints. Vercel's request-size limit still applies, so larger files must be compressed or use a direct-to-object-storage upload flow.
 
 ## Run locally
 
@@ -58,4 +58,4 @@ Set the environment variables above before starting. The schema is initialized a
 
 ## Deploy to Vercel
 
-The root `server.js` exports the Express app for Vercel's zero-configuration Express support; `vercel.json` includes the static frontend assets. Create the Neon database and private R2 bucket, set all required environment variables in Vercel, then deploy. Vercel's filesystem is not used for application data. Document and transaction attachments are limited to 3 MB to leave room for multipart request overhead under Vercel's serverless payload limit. The login attempt limit is stored in PostgreSQL so it is shared across serverless instances.
+The root `server.js` exports the Express app for Vercel's zero-configuration Express support; `vercel.json` includes the static frontend assets. Create the Neon database, optionally create a private R2 bucket, set the required environment variables in Vercel, then deploy. Vercel's filesystem is not used for application data. Document and transaction attachments are limited to 3 MB to leave room for multipart request overhead under Vercel's serverless payload limit. The login attempt limit is stored in PostgreSQL so it is shared across serverless instances.

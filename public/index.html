@@ -8,7 +8,7 @@
     <link rel="icon" type="image/png" href="/images/logo-bbm.png" />
     <link rel="apple-touch-icon" href="/images/logo-bbm.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
-    <link rel="stylesheet" href="/styles.css?v=20261109-brand" />
+    <link rel="stylesheet" href="/styles.css?v=20261109-finance-simple" />
   </head>
   <body>
     <div id="app" class="app-shell">
@@ -188,7 +188,7 @@
                 <h3>Input Transaksi</h3>
               </div>
               <form id="transactionForm" class="transaction-form">
-                <div class="form-grid">
+                <div class="form-grid transaction-quick-grid">
                   <label>
                     <span>Jenis</span>
                     <select name="type" required>
@@ -210,28 +210,41 @@
                   </label>
                   <label>
                     <span>Nominal</span>
-                    <input type="number" name="amount" min="0" required />
-                  </label>
-                  <label>
-                    <span>Metode Pembayaran</span>
-                    <input type="text" name="payment_method" placeholder="Transfer Bank" />
-                  </label>
-                  <label>
-                    <span>Nama Pengirim / Pelanggan</span>
-                    <input type="text" name="counterparty" placeholder="PT. ABC" />
-                  </label>
-                  <label>
-                    <span>Bukti attachment</span>
-                    <input type="file" name="attachment" accept="image/*,.pdf" data-max-upload="3145728" />
-                    <small class="field-help">Maksimal 3 MB agar dapat diunggah ke Vercel. Kompres file yang lebih besar terlebih dahulu.</small>
-                    <small class="field-help" data-storage-note hidden></small>
+                    <input type="number" name="amount" min="1" step="1" inputmode="numeric" placeholder="Contoh: 150000" required />
                   </label>
                 </div>
                 <label>
-                  <span>Keterangan</span>
-                  <textarea name="description" rows="3" placeholder="Catatan tambahan..."></textarea>
+                  <span>Catatan</span>
+                  <textarea name="description" rows="2" placeholder="Contoh: pembelian pupuk untuk proyek..." required></textarea>
                 </label>
-                <button type="submit" class="primary-btn">Simpan Transaksi</button>
+                <details class="transaction-extra">
+                  <summary>Detail tambahan <span>(opsional)</span></summary>
+                  <div class="form-grid">
+                    <label>
+                      <span>Kategori</span>
+                      <input type="text" name="category" placeholder="Umum" />
+                    </label>
+                    <label>
+                      <span>Nama Proyek / Sumber</span>
+                      <input type="text" name="project_name" placeholder="Umum" />
+                    </label>
+                    <label>
+                      <span>Metode Pembayaran</span>
+                      <input type="text" name="payment_method" placeholder="Transfer Bank" />
+                    </label>
+                    <label>
+                      <span>Nama Pengirim / Penerima</span>
+                      <input type="text" name="counterparty" placeholder="Nama pihak terkait" />
+                    </label>
+                    <label>
+                      <span>Bukti transaksi</span>
+                      <input type="file" name="attachment" accept="image/*,.pdf" data-max-upload="3145728" />
+                      <small class="field-help">Maksimal 3 MB.</small>
+                      <small class="field-help" data-storage-note hidden></small>
+                    </label>
+                  </div>
+                </details>
+                <button type="submit" class="primary-btn">Simpan Catatan</button>
               </form>
             </div>
 

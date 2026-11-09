@@ -1458,6 +1458,39 @@ select {
   gap: 16px;
 }
 
+.transaction-quick-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: end;
+}
+
+.transaction-extra {
+  border: 1px solid #e3eaf0;
+  border-radius: 12px;
+  background: #fbfcfc;
+}
+
+.transaction-extra summary {
+  padding: 12px 14px;
+  color: var(--navy);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.transaction-extra summary span {
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.transaction-extra[open] .form-grid {
+  padding: 0 14px 14px;
+}
+
+.transaction-form > .primary-btn {
+  justify-self: start;
+  min-width: 180px;
+}
+
 .inline-actions,
 .inline-controls {
   display: flex;
@@ -1537,6 +1570,10 @@ select {
 }
 
 @media (max-width: 860px) {
+  .transaction-quick-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .login-screen {
     overflow: auto;
     padding: 22px;
@@ -1592,6 +1629,10 @@ select {
 }
 
 @media (max-width: 520px) {
+  .transaction-quick-grid {
+    grid-template-columns: 1fr;
+  }
+
   .dashboard-main {
     padding: 14px;
   }

@@ -309,6 +309,7 @@ function renderFinanceTable(transactions) {
       <span>${formatCurrency(tx.amount)}</span>
       <span>${escapeHtml(tx.counterparty)}</span>
       <span>${escapeHtml(tx.created_by_name ?? '-')}</span>
+      <span>${tx.has_attachment ? `<a href="/api/transactions/${Number(tx.id)}/attachment" target="_blank" rel="noreferrer">Buka lampiran</a>` : 'Tanpa lampiran'}</span>
     </div>
   `).join('');
   target.innerHTML = rows || '<p>Belum ada transaksi.</p>';
@@ -471,7 +472,7 @@ function renderDocumentTable(documents) {
       <span>${escapeHtml(doc.title)}</span>
       <span>${escapeHtml(doc.category)}</span>
       <span>${escapeHtml(doc.uploaded_by_name || '-')}</span>
-      <span>${doc.file_path ? `<a href="/api/documents/${doc.id}/download" target="_blank" rel="noreferrer">Buka file</a>` : 'Tanpa file'}</span>
+      <span>${doc.has_file ? `<a href="/api/documents/${Number(doc.id)}/download" target="_blank" rel="noreferrer">Buka file</a>` : 'Tanpa file'}</span>
     </div>
   `).join('');
   target.innerHTML = rows || '<p>Belum ada dokumen.</p>';
@@ -701,8 +702,13 @@ async function loadSession() {
     if (!health.fileStorageAvailable) {
       document.querySelectorAll('[data-storage-note]').forEach((note) => {
         note.hidden = false;
-        note.textContent = 'Penyimpanan lampiran belum diaktifkan. Form dan data tanpa file tetap dapat disimpan.';
+        note.textContent = 'Penyimpanan file belum tersedia. Unggah file tidak dapat digunakan saat ini.';
         note.previousElementSibling.disabled = true;
+      });
+    } else if (health.fileStorageMode === 'neon') {
+      document.querySelectorAll('[data-storage-note]').forEach((note) => {
+        note.hidden = false;
+        note.textContent = 'File kecil disimpan privat di database Neon (maks. 3 MB).';
       });
     }
   } catch (error) {
@@ -948,11 +954,25 @@ document.addEventListener('submit', async (event) => {
   }
 });
 
-document.getElementById('transactionForm').addEventListener('submit', async (event) => {
+const transactionForm = document.getElementById('transactionForm');
+const transactionDateInput = transactionForm.elements.date;
+const setTransactionDateToday = () => {
+  const today = new Date();
+  const localDate = new Date(today.getTime() - today.getTimezoneOffset() * 60000)
+    .toISOString()
+    .slice(0, 10);
+  transactionDateInput.value = localDate;
+};
+
+setTransactionDateToday();
+
+transactionForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
   if (!validateUploadSize(form)) return;
   const formData = new FormData(form);
+  const submitButton = form.querySelector('button[type="submit"]');
+  submitButton.disabled = true;
 
   try {
     await apiFetch('/api/transactions', {
@@ -960,9 +980,12 @@ document.getElementById('transactionForm').addEventListener('submit', async (eve
       body: formData
     });
     form.reset();
+    setTransactionDateToday();
     await refreshData();
   } catch (error) {
     alert(error.message);
+  } finally {
+    submitButton.disabled = false;
   }
 });
 

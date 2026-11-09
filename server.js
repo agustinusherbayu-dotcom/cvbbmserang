@@ -80,9 +80,15 @@ async function initializeDatabase() {
       payment_method TEXT NOT NULL DEFAULT 'Transfer',
       counterparty TEXT NOT NULL DEFAULT 'Internal',
       attachment_path TEXT,
+      attachment_data BYTEA,
+      attachment_name TEXT,
+      attachment_mime TEXT,
       created_by BIGINT NOT NULL REFERENCES users(id),
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS attachment_data BYTEA;
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS attachment_name TEXT;
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS attachment_mime TEXT;
     CREATE TABLE IF NOT EXISTS tasks (
       id BIGSERIAL PRIMARY KEY,
       title TEXT NOT NULL,
@@ -120,9 +126,15 @@ async function initializeDatabase() {
       category TEXT NOT NULL,
       description TEXT NOT NULL DEFAULT '',
       file_path TEXT,
+      file_data BYTEA,
+      file_name TEXT,
+      file_mime TEXT,
       uploaded_by BIGINT NOT NULL REFERENCES users(id),
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+    ALTER TABLE documents ADD COLUMN IF NOT EXISTS file_data BYTEA;
+    ALTER TABLE documents ADD COLUMN IF NOT EXISTS file_name TEXT;
+    ALTER TABLE documents ADD COLUMN IF NOT EXISTS file_mime TEXT;
     CREATE TABLE IF NOT EXISTS audit_logs (
       id BIGSERIAL PRIMARY KEY,
       user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
@@ -252,27 +264,25 @@ function isValidIsoDate(value) {
 
 async function storeUpload(file, prefix) {
   if (!file) return null;
-  if (!s3 || !bucketName) {
-    const error = new Error('Object storage belum dikonfigurasi.');
-    error.status = 503;
-    throw error;
-  }
-
   const originalName = path.basename(file.originalname).replace(/[^a-zA-Z0-9._-]/g, '_').slice(-120) || 'file';
-  const key = `${prefix}/${crypto.randomUUID()}-${originalName}`;
-  await s3.send(new PutObjectCommand({
-    Bucket: bucketName,
-    Key: key,
-    Body: file.buffer,
-    ContentType: file.mimetype || 'application/octet-stream',
-    ContentDisposition: `attachment; filename="${originalName.replace(/["\\]/g, '_')}"`
-  }));
-  return key;
+  const mimeType = file.mimetype || 'application/octet-stream';
+  if (s3 && bucketName) {
+    const key = `${prefix}/${crypto.randomUUID()}-${originalName}`;
+    await s3.send(new PutObjectCommand({
+      Bucket: bucketName,
+      Key: key,
+      Body: file.buffer,
+      ContentType: mimeType,
+      ContentDisposition: `attachment; filename="${originalName}"`
+    }));
+    return { key, data: null, name: originalName, mimeType };
+  }
+  return { key: null, data: file.buffer, name: originalName, mimeType };
 }
 
-async function removeUpload(key) {
-  if (key && s3 && bucketName) {
-    await s3.send(new DeleteObjectCommand({ Bucket: bucketName, Key: key }));
+async function removeUpload(uploadedFile) {
+  if (uploadedFile?.key && s3 && bucketName) {
+    await s3.send(new DeleteObjectCommand({ Bucket: bucketName, Key: uploadedFile.key }));
   }
 }
 
@@ -280,11 +290,28 @@ async function signedDownload(key) {
   return getSignedUrl(s3, new GetObjectCommand({ Bucket: bucketName, Key: key }), { expiresIn: 60 });
 }
 
+function sendStoredFile(res, file) {
+  if (!file?.data) return res.status(404).json({ error: 'File tidak ditemukan.' });
+  const safeName = String(file.name || 'download')
+    .replace(/[^a-zA-Z0-9._-]/g, '_')
+    .slice(-120) || 'download';
+  res.set({
+    'Content-Type': file.mimeType || 'application/octet-stream',
+    'Content-Disposition': `attachment; filename="${safeName}"`,
+    'X-Content-Type-Options': 'nosniff',
+    'Cache-Control': 'private, no-store'
+  });
+  return res.send(file.data);
+}
+
 async function getDashboardData(user) {
   const isDirector = user.role === 'DIREKTUR';
   const transactions = isDirector
     ? (await pool.query(`
-        SELECT t.*, u.name AS created_by_name
+        SELECT t.id, t.type, t.date, t.category, t.project_name, t.description, t.amount,
+               t.payment_method, t.counterparty, t.created_by, t.created_at,
+               (t.attachment_path IS NOT NULL OR t.attachment_data IS NOT NULL) AS has_attachment,
+               u.name AS created_by_name
         FROM transactions t
         LEFT JOIN users u ON u.id = t.created_by
         ORDER BY t.date DESC, t.id DESC
@@ -581,7 +608,9 @@ app.get('/api/audit', requireAuth, requireRole('DIREKTUR'), asyncRoute(async (_r
 
 app.get('/api/documents', requireAuth, requireRole('DIREKTUR'), asyncRoute(async (_req, res) => {
   const result = await pool.query(`
-    SELECT d.*, u.name AS uploaded_by_name
+    SELECT d.id, d.title, d.category, d.description, d.file_path,
+           (d.file_path IS NOT NULL OR d.file_data IS NOT NULL) AS has_file,
+           d.uploaded_by, d.created_at, u.name AS uploaded_by_name
     FROM documents d
     LEFT JOIN users u ON u.id = d.uploaded_by
     ORDER BY d.created_at DESC
@@ -592,16 +621,20 @@ app.get('/api/documents', requireAuth, requireRole('DIREKTUR'), asyncRoute(async
 app.post('/api/documents', requireAuth, requireRole('DIREKTUR'), upload.single('attachment'), asyncRoute(async (req, res) => {
   const { title, category, description } = req.body || {};
   if (!title || !category) return res.status(400).json({ error: 'Judul dan kategori dokumen wajib diisi.' });
-  const fileKey = await storeUpload(req.file, 'documents');
+  const uploadedFile = await storeUpload(req.file, 'documents');
   let created;
   try {
     created = await pool.query(`
-      INSERT INTO documents (title, category, description, file_path, uploaded_by)
-      VALUES ($1, $2, $3, $4, $5)
+      INSERT INTO documents (title, category, description, file_path, file_data, file_name, file_mime, uploaded_by)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
       RETURNING id
-    `, [String(title).trim(), String(category).trim(), description || '', fileKey, req.session.user.id]);
+    `, [
+      String(title).trim(), String(category).trim(), description || '',
+      uploadedFile?.key || null, uploadedFile?.data || null, uploadedFile?.name || null,
+      uploadedFile?.mimeType || null, req.session.user.id
+    ]);
   } catch (error) {
-    await removeUpload(fileKey);
+    await removeUpload(uploadedFile);
     throw error;
   }
   await logAudit(req.session.user.id, 'DOCUMENT_UPLOADED', `Uploaded document #${created.rows[0].id}: ${title}`, req.ip);
@@ -609,11 +642,18 @@ app.post('/api/documents', requireAuth, requireRole('DIREKTUR'), upload.single('
 }));
 
 app.get('/api/documents/:id/download', requireAuth, requireRole('DIREKTUR'), asyncRoute(async (req, res) => {
-  if (!s3 || !bucketName) return res.status(503).json({ error: 'Object storage belum dikonfigurasi.' });
-  const result = await pool.query('SELECT file_path FROM documents WHERE id = $1', [req.params.id]);
-  const key = result.rows[0]?.file_path;
-  if (!key) return res.status(404).json({ error: 'File dokumen tidak ditemukan.' });
-  res.redirect(await signedDownload(key));
+  const result = await pool.query(
+    'SELECT file_path, file_data, file_name, file_mime FROM documents WHERE id = $1',
+    [req.params.id]
+  );
+  const file = result.rows[0];
+  if (!file) return res.status(404).json({ error: 'File dokumen tidak ditemukan.' });
+  if (file.file_path) return res.redirect(await signedDownload(file.file_path));
+  return sendStoredFile(res, {
+    data: file.file_data,
+    name: file.file_name,
+    mimeType: file.file_mime
+  });
 }));
 
 app.get('/api/bonus', requireAuth, asyncRoute(async (req, res) => {
@@ -664,7 +704,10 @@ app.post('/api/tasks/:id/verify', requireAuth, requireRole('DIREKTUR'), asyncRou
 
 app.get('/api/transactions', requireAuth, requireRole('DIREKTUR'), asyncRoute(async (_req, res) => {
   const result = await pool.query(`
-    SELECT t.*, u.name AS created_by_name
+    SELECT t.id, t.type, t.date, t.category, t.project_name, t.description, t.amount,
+           t.payment_method, t.counterparty, t.attachment_path,
+           (t.attachment_path IS NOT NULL OR t.attachment_data IS NOT NULL) AS has_attachment,
+           t.created_by, t.created_at, u.name AS created_by_name
     FROM transactions t
     LEFT JOIN users u ON u.id = t.created_by
     ORDER BY t.date DESC, t.id DESC
@@ -675,25 +718,28 @@ app.get('/api/transactions', requireAuth, requireRole('DIREKTUR'), asyncRoute(as
 app.post('/api/transactions', requireAuth, requireRole('DIREKTUR'), upload.single('attachment'), asyncRoute(async (req, res) => {
   const { type, date, category, project_name, description, amount, payment_method, counterparty } = req.body || {};
   const numericAmount = Number(amount);
-  if (!['income', 'expense'].includes(type) || !isValidIsoDate(date) || !category || !project_name || !Number.isFinite(numericAmount) || numericAmount <= 0) {
-    return res.status(400).json({ error: 'Jenis, tanggal, kategori, proyek, dan nominal yang valid wajib diisi.' });
+  if (!['income', 'expense'].includes(type) || !isValidIsoDate(date) || !Number.isFinite(numericAmount) || numericAmount <= 0) {
+    return res.status(400).json({ error: 'Jenis, tanggal, dan nominal yang valid wajib diisi.' });
   }
 
-  const fileKey = await storeUpload(req.file, 'transactions');
+  const uploadedFile = await storeUpload(req.file, 'transactions');
   let created;
   try {
     created = await pool.query(`
       INSERT INTO transactions (
         type, date, category, project_name, description, amount, payment_method,
-        counterparty, attachment_path, created_by
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        counterparty, attachment_path, attachment_data, attachment_name, attachment_mime, created_by
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
       RETURNING id
     `, [
-      type, date, String(category).trim(), String(project_name).trim(), String(description || ''),
-      numericAmount, String(payment_method || 'Transfer'), String(counterparty || 'Internal'), fileKey, req.session.user.id
+      type, date, String(category || 'Umum').trim() || 'Umum',
+      String(project_name || 'Umum').trim() || 'Umum', String(description || ''),
+      numericAmount, String(payment_method || 'Transfer'), String(counterparty || 'Internal'),
+      uploadedFile?.key || null, uploadedFile?.data || null, uploadedFile?.name || null,
+      uploadedFile?.mimeType || null, req.session.user.id
     ]);
   } catch (error) {
-    await removeUpload(fileKey);
+    await removeUpload(uploadedFile);
     throw error;
   }
   await logAudit(req.session.user.id, 'TRANSACTION_CREATED', `Added ${type} transaction #${created.rows[0].id}`, req.ip);
@@ -701,11 +747,18 @@ app.post('/api/transactions', requireAuth, requireRole('DIREKTUR'), upload.singl
 }));
 
 app.get('/api/transactions/:id/attachment', requireAuth, requireRole('DIREKTUR'), asyncRoute(async (req, res) => {
-  if (!s3 || !bucketName) return res.status(503).json({ error: 'Object storage belum dikonfigurasi.' });
-  const result = await pool.query('SELECT attachment_path FROM transactions WHERE id = $1', [req.params.id]);
-  const key = result.rows[0]?.attachment_path;
-  if (!key) return res.status(404).json({ error: 'Lampiran tidak ditemukan.' });
-  res.redirect(await signedDownload(key));
+  const result = await pool.query(
+    'SELECT attachment_path, attachment_data, attachment_name, attachment_mime FROM transactions WHERE id = $1',
+    [req.params.id]
+  );
+  const file = result.rows[0];
+  if (!file) return res.status(404).json({ error: 'Lampiran tidak ditemukan.' });
+  if (file.attachment_path) return res.redirect(await signedDownload(file.attachment_path));
+  return sendStoredFile(res, {
+    data: file.attachment_data,
+    name: file.attachment_name,
+    mimeType: file.attachment_mime
+  });
 }));
 
 app.get('/api/tasks', requireAuth, asyncRoute(async (req, res) => {
@@ -821,7 +874,8 @@ app.get('/api/health', (_req, res) => {
   res.json({
     status: 'ok',
     app: 'CV Banten Bangkit Maju',
-    fileStorageAvailable: Boolean(s3 && bucketName)
+    fileStorageAvailable: true,
+    fileStorageMode: s3 && bucketName ? 'r2' : 'neon'
   });
 });
 

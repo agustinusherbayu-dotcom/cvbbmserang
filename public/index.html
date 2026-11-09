@@ -8,7 +8,7 @@
     <link rel="icon" type="image/png" href="/images/logo-bbm.png" />
     <link rel="apple-touch-icon" href="/images/logo-bbm.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
-    <link rel="stylesheet" href="/styles.css?v=20261109-finance-simple" />
+    <link rel="stylesheet" href="/styles.css?v=20261109-procurement" />
   </head>
   <body>
     <div id="app" class="app-shell">
@@ -94,6 +94,8 @@
           <nav class="nav-menu">
             <button class="nav-btn active" data-view="dashboard">Dashboard</button>
             <button class="nav-btn" data-view="finance">Keuangan</button>
+            <button class="nav-btn" data-view="inventory">Inventory</button>
+            <button class="nav-btn" data-view="procurement">Pengadaan</button>
             <button class="nav-btn" data-view="documents">Dokumen</button>
             <button class="nav-btn" data-view="bonus">Bonus</button>
             <button class="nav-btn" data-view="tasks">Pekerjaan</button>
@@ -253,6 +255,227 @@
                 <h3>Daftar Transaksi</h3>
               </div>
               <div id="financeTable" class="list-table"></div>
+            </div>
+          </section>
+
+          <section id="inventoryView" class="view hidden">
+            <p id="inventoryLoadMessage" class="field-help" role="status" hidden></p>
+            <div class="summary-grid inventory-summary">
+              <article class="summary-card"><span>Barang aktif</span><strong id="inventoryTotalItems">0</strong></article>
+              <article class="summary-card"><span>Stok minimum</span><strong id="inventoryLowStock">0</strong></article>
+              <article class="summary-card"><span>Stok habis</span><strong id="inventoryOutOfStock">0</strong></article>
+              <article class="summary-card"><span>Nilai persediaan</span><strong id="inventoryTotalValue">Rp0</strong></article>
+            </div>
+
+            <div class="panel inventory-manage-panel" data-inventory-write>
+              <div class="panel-header"><h3>Daftarkan Barang</h3></div>
+              <form id="inventoryItemForm" class="transaction-form">
+                <div class="form-grid">
+                  <label><span>Nama barang</span><input name="name" maxlength="120" required /></label>
+                  <label><span>Kategori</span><select name="category_id" required></select></label>
+                  <label><span>Satuan dasar</span>
+                    <select name="base_unit" required>
+                      <option value="KG">Kg</option><option value="G">Gram</option><option value="TON">Ton</option>
+                      <option value="LITER">Liter</option><option value="UNIT">Unit</option><option value="PCS">Pcs</option>
+                      <option value="SAK">Sak</option><option value="KARUNG">Karung</option><option value="METER">Meter</option>
+                      <option value="LAINNYA">Satuan lain...</option>
+                    </select>
+                  </label>
+                  <label><span>Satuan alternatif</span>
+                    <select name="alternate_unit">
+                      <option value="">Tidak ada</option>
+                      <option value="KG">Kg</option><option value="G">Gram</option><option value="TON">Ton</option>
+                      <option value="LITER">Liter</option><option value="UNIT">Unit</option><option value="PCS">Pcs</option>
+                      <option value="SAK">Sak</option><option value="KARUNG">Karung</option><option value="METER">Meter</option>
+                      <option value="LAINNYA">Satuan lain...</option>
+                    </select>
+                  </label>
+                  <label data-custom-unit="base" hidden><span>Nama satuan dasar</span><input name="base_unit_other" maxlength="20" /></label>
+                  <label data-custom-unit="alternate" hidden><span>Nama satuan alternatif</span><input name="alternate_unit_other" maxlength="20" /></label>
+                  <label><span>1 satuan alternatif = satuan dasar</span><input name="conversion_factor" type="number" min="0.000001" step="0.000001" placeholder="Contoh: 25" /></label>
+                  <label><span>Stok minimum</span><input name="min_stock" type="number" min="0" step="0.000001" value="0" required /></label>
+                  <label><span>Stok maksimum (opsional)</span><input name="max_stock" type="number" min="0" step="0.000001" /></label>
+                  <label><span>Harga referensi per satuan dasar (Rp)</span><input name="reference_price" type="number" min="0" step="0.01" value="0" required /></label>
+                  <label><span>Gudang bawaan (opsional)</span><select name="default_warehouse_id"></select></label>
+                </div>
+                <label><span>Deskripsi</span><textarea name="description" rows="2" maxlength="1000"></textarea></label>
+                <button class="primary-btn" type="submit">Simpan Barang</button>
+              </form>
+            </div>
+
+            <div class="panel">
+              <div class="panel-header"><h3>Master Barang & Saldo Stok</h3></div>
+              <div id="inventoryItemsTable" class="list-table"></div>
+            </div>
+
+            <div class="panel-grid two-col inventory-admin-grid" data-inventory-write>
+              <div class="panel">
+                <div class="panel-header"><h3>Tambah Kategori</h3></div>
+                <form id="inventoryCategoryForm" class="transaction-form">
+                  <label><span>Nama kategori</span><input name="name" maxlength="80" required /></label>
+                  <label><span>Deskripsi</span><input name="description" maxlength="500" /></label>
+                  <button class="primary-btn" type="submit">Tambah Kategori</button>
+                </form>
+              </div>
+              <div class="panel">
+                <div class="panel-header"><h3>Tambah Gudang</h3></div>
+                <form id="inventoryWarehouseForm" class="transaction-form">
+                  <label><span>Nama gudang</span><input name="name" maxlength="100" required /></label>
+                  <label><span>Lokasi</span><input name="location" maxlength="250" /></label>
+                  <button class="primary-btn" type="submit">Tambah Gudang</button>
+                </form>
+              </div>
+            </div>
+
+            <div class="panel" data-inventory-write>
+              <div class="panel-header"><h3>Catat Stok Masuk / Keluar</h3></div>
+              <form id="inventoryMovementForm" class="transaction-form">
+                <input type="hidden" name="idempotency_key" />
+                <div class="form-grid">
+                  <label><span>Jenis mutasi</span><select name="movement_type" required><option value="IN">Stok masuk</option><option value="OUT">Stok keluar</option></select></label>
+                  <label><span>Barang</span><select name="item_id" required></select></label>
+                  <label><span>Gudang</span><select name="warehouse_id" required></select></label>
+                  <label><span>Jumlah</span><input name="quantity" type="number" min="0.000001" step="0.000001" required /></label>
+                  <label><span>Satuan</span><select name="unit" required></select></label>
+                  <label data-inventory-cost><span>Harga per satuan pilihan (Rp)</span><input name="unit_cost" type="number" min="0" step="0.01" value="0" /></label>
+                  <label><span>Referensi (opsional)</span><input name="reference" maxlength="120" placeholder="Nomor nota / dokumen" /></label>
+                </div>
+                <label><span>Catatan</span><textarea name="notes" rows="2" maxlength="1000"></textarea></label>
+                <button class="primary-btn" type="submit">Simpan Mutasi</button>
+              </form>
+            </div>
+
+            <div class="panel">
+              <div class="panel-header"><h3>Riwayat Mutasi Terbaru</h3></div>
+              <div id="inventoryMovementsTable" class="list-table"></div>
+            </div>
+            <div class="panel-grid two-col">
+              <div class="panel">
+                <div class="panel-header"><h3>Kategori Persediaan</h3></div>
+                <div id="inventoryCategoriesList" class="list-table"></div>
+              </div>
+              <div class="panel">
+                <div class="panel-header"><h3>Gudang</h3></div>
+                <div id="inventoryWarehousesList" class="list-table"></div>
+              </div>
+            </div>
+          </section>
+
+          <dialog id="inventoryEditDialog" class="modal-dialog">
+            <form id="inventoryEditForm" class="transaction-form">
+              <div class="panel-header"><h3 id="inventoryEditTitle">Ubah Data</h3></div>
+              <input type="hidden" name="object_type" />
+              <input type="hidden" name="object_id" />
+              <label><span id="inventoryEditNameLabel">Nama</span><input name="name" maxlength="120" required /></label>
+              <label data-inventory-edit-details><span id="inventoryEditDetailsLabel">Deskripsi</span><input name="details" maxlength="1000" /></label>
+              <div class="form-grid" data-inventory-edit-item hidden>
+                <label><span>Kategori</span><select name="category_id"></select></label>
+                <label><span>Gudang bawaan</span><select name="default_warehouse_id"></select></label>
+                <label><span>Stok minimum</span><input name="min_stock" type="number" min="0" step="0.000001" /></label>
+                <label><span>Stok maksimum</span><input name="max_stock" type="number" min="0" step="0.000001" /></label>
+                <label><span>Harga referensi</span><input name="reference_price" type="number" min="0" step="0.01" /></label>
+              </div>
+              <label><span>Status</span><select name="is_active"><option value="true">Aktif</option><option value="false">Nonaktif</option></select></label>
+              <div class="inline-actions">
+                <button class="primary-btn" type="submit">Simpan Perubahan</button>
+                <button class="ghost-btn" type="button" data-close-inventory-edit>Batal</button>
+              </div>
+            </form>
+          </dialog>
+
+          <section id="procurementView" class="view hidden">
+            <p id="procurementLoadMessage" class="field-help" role="status" hidden></p>
+            <div class="summary-grid inventory-summary">
+              <article class="summary-card"><span>Supplier aktif</span><strong id="procurementSupplierCount">0</strong></article>
+              <article class="summary-card"><span>PR menunggu keputusan</span><strong id="procurementPendingCount">0</strong></article>
+              <article class="summary-card"><span>Nilai PR aktif</span><strong id="procurementPendingValue">Rp0</strong></article>
+            </div>
+
+            <div class="panel" data-procurement-write>
+              <div class="panel-header"><h3>Tambah Supplier</h3></div>
+              <form id="supplierForm" class="transaction-form">
+                <input type="hidden" name="supplier_id" />
+                <div class="form-grid">
+                  <label><span>Nama perusahaan</span><input name="company_name" maxlength="160" required /></label>
+                  <label><span>Nama kontak</span><input name="contact_name" maxlength="120" /></label>
+                  <label><span>Telepon</span><input name="phone" type="tel" maxlength="40" /></label>
+                  <label><span>WhatsApp</span><input name="whatsapp" type="tel" maxlength="40" /></label>
+                  <label><span>Email</span><input name="email" type="email" maxlength="254" /></label>
+                  <label><span>Kategori barang</span><input name="category" maxlength="120" placeholder="Bahan baku, kemasan..." /></label>
+                  <label><span>Kota / provinsi</span><input name="city_province" maxlength="120" /></label>
+                  <label><span>NPWP</span><input name="tax_id" maxlength="40" /></label>
+                  <label><span>Payment terms</span><input name="payment_terms" maxlength="160" placeholder="Contoh: 30 hari" /></label>
+                  <label><span>Lead time (hari)</span><input name="lead_time_days" type="number" min="0" max="3650" step="1" /></label>
+                  <label><span>Status supplier</span><select name="is_active"><option value="true">Aktif</option><option value="false">Nonaktif</option></select></label>
+                  <label data-supplier-bank data-director-only><span>Informasi rekening (Direktur)</span><input name="bank_details" maxlength="500" /></label>
+                </div>
+                <label><span>Alamat</span><textarea name="address" rows="2" maxlength="500"></textarea></label>
+                <label><span>Catatan</span><textarea name="notes" rows="2" maxlength="1000"></textarea></label>
+                <div class="inline-actions">
+                  <button class="primary-btn" type="submit">Simpan Supplier</button>
+                  <button class="ghost-btn" type="button" id="cancelSupplierEdit" hidden>Batal Ubah</button>
+                </div>
+              </form>
+            </div>
+
+            <div class="panel">
+              <div class="panel-header"><h3>Daftar Supplier</h3></div>
+              <div class="procurement-search-row">
+                <label><span>Cari supplier</span><input id="supplierSearch" type="search" placeholder="Nama, kategori, kota..." /></label>
+                <label><span>Filter kategori</span><select id="supplierCategoryFilter"><option value="">Semua kategori</option></select></label>
+              </div>
+              <div id="suppliersTable" class="list-table"></div>
+            </div>
+
+            <div class="panel-grid two-col procurement-config-grid">
+              <div class="panel" data-procurement-write>
+                <div class="panel-header"><h3>Buat Purchase Request</h3></div>
+                <form id="purchaseRequestForm" class="transaction-form">
+                  <div class="form-grid">
+                    <label><span>Divisi</span><input name="division" maxlength="120" placeholder="Operasional / Produksi" /></label>
+                    <label><span>Kategori kebutuhan</span><input name="category" maxlength="120" required /></label>
+                    <label><span>Urgensi</span><select name="urgency"><option value="normal">Normal</option><option value="low">Rendah</option><option value="high">Tinggi</option><option value="urgent">Mendesak</option></select></label>
+                    <label><span>Tanggal dibutuhkan</span><input name="needed_by" type="date" /></label>
+                    <label><span>Proyek (opsional)</span><input name="project_name" maxlength="160" /></label>
+                  </div>
+                  <div class="panel-header procurement-lines-heading"><h4>Barang yang diminta</h4><button class="mini-btn" id="addPurchaseRequestItem" type="button">Tambah barang</button></div>
+                  <div id="purchaseRequestItems" class="procurement-lines">
+                    <div class="procurement-line" data-request-line>
+                      <label><span>Nama barang</span><input data-line-name maxlength="160" required /></label>
+                      <label><span>Jumlah</span><input data-line-quantity type="number" min="0.000001" step="0.000001" required /></label>
+                      <label><span>Satuan</span><input data-line-unit maxlength="20" placeholder="Kg / unit..." required /></label>
+                      <label><span>Harga estimasi per satuan</span><input data-line-price type="number" min="0" step="0.01" value="0" required /></label>
+                      <button class="mini-btn danger" type="button" data-remove-request-line hidden>Hapus</button>
+                    </div>
+                  </div>
+                  <label><span>Alasan pembelian</span><textarea name="reason" rows="3" maxlength="1500" required></textarea></label>
+                  <button class="primary-btn" type="submit">Ajukan PR</button>
+                </form>
+              </div>
+
+              <div class="panel" data-director-only>
+                <div class="panel-header"><h3>Batas Persetujuan Manager</h3></div>
+                <form id="procurementLimitForm" class="transaction-form">
+                  <label><span>Nominal maksimum (Rp)</span><input name="manager_approval_limit" type="number" min="0" step="0.01" required /></label>
+                  <small class="field-help">Manager hanya dapat menyetujui PR sampai batas ini. Nilai 0 berarti persetujuan Direktur saja.</small>
+                  <button class="primary-btn" type="submit">Simpan Batas</button>
+                </form>
+              </div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-header"><h3>Purchase Request & Riwayat Persetujuan</h3></div>
+              <div id="purchaseRequestsTable" class="list-table"></div>
+            </div>
+            <div class="panel">
+              <div class="panel-header"><h3>Perbandingan Penawaran Supplier</h3></div>
+              <p class="field-help">Catat harga penawaran untuk seluruh barang pada PR yang disetujui. PO hanya dapat dibuat dari penawaran yang masih berlaku.</p>
+              <div id="supplierQuotationsTable" class="list-table"></div>
+            </div>
+            <div class="panel">
+              <div class="panel-header"><h3>Purchase Order</h3></div>
+              <p class="field-help">PO yang dibuat Manager menunggu persetujuan Direktur. PO yang diterbitkan Direktur langsung berstatus terbit.</p>
+              <div id="purchaseOrdersTable" class="list-table"></div>
             </div>
           </section>
 

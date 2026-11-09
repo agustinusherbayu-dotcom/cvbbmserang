@@ -143,6 +143,193 @@ async function initializeDatabase() {
       ip_address TEXT NOT NULL DEFAULT 'unknown',
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+    CREATE TABLE IF NOT EXISTS inventory_categories (
+      id BIGSERIAL PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      description TEXT NOT NULL DEFAULT '',
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_by BIGINT REFERENCES users(id),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS warehouses (
+      id BIGSERIAL PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      location TEXT NOT NULL DEFAULT '',
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_by BIGINT REFERENCES users(id),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE SEQUENCE IF NOT EXISTS inventory_item_sku_seq;
+    CREATE TABLE IF NOT EXISTS inventory_items (
+      id BIGSERIAL PRIMARY KEY,
+      sku TEXT NOT NULL UNIQUE DEFAULT ('BBM-INV-' || nextval('inventory_item_sku_seq')::TEXT),
+      name TEXT NOT NULL,
+      category_id BIGINT NOT NULL REFERENCES inventory_categories(id),
+      description TEXT NOT NULL DEFAULT '',
+      base_unit TEXT NOT NULL,
+      alternate_unit TEXT,
+      conversion_factor NUMERIC(20, 6) CHECK (conversion_factor IS NULL OR conversion_factor > 0),
+      min_stock NUMERIC(20, 6) NOT NULL DEFAULT 0 CHECK (min_stock >= 0),
+      max_stock NUMERIC(20, 6) CHECK (max_stock IS NULL OR max_stock >= min_stock),
+      reference_price NUMERIC(16, 2) NOT NULL DEFAULT 0 CHECK (reference_price >= 0),
+      default_warehouse_id BIGINT REFERENCES warehouses(id),
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_by BIGINT REFERENCES users(id),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CHECK (
+        (alternate_unit IS NULL AND conversion_factor IS NULL)
+        OR (alternate_unit IS NOT NULL AND conversion_factor IS NOT NULL)
+      )
+    );
+    CREATE TABLE IF NOT EXISTS inventory_balances (
+      item_id BIGINT NOT NULL REFERENCES inventory_items(id),
+      warehouse_id BIGINT NOT NULL REFERENCES warehouses(id),
+      on_hand NUMERIC(40, 12) NOT NULL DEFAULT 0 CHECK (on_hand >= 0),
+      average_cost NUMERIC(20, 6) NOT NULL DEFAULT 0 CHECK (average_cost >= 0),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (item_id, warehouse_id)
+    );
+    CREATE TABLE IF NOT EXISTS inventory_movements (
+      id BIGSERIAL PRIMARY KEY,
+      idempotency_key UUID NOT NULL UNIQUE,
+      item_id BIGINT NOT NULL REFERENCES inventory_items(id),
+      warehouse_id BIGINT NOT NULL REFERENCES warehouses(id),
+      movement_type TEXT NOT NULL CHECK (movement_type IN ('IN', 'OUT')),
+      quantity NUMERIC(20, 6) NOT NULL CHECK (quantity > 0),
+      unit TEXT NOT NULL,
+      quantity_base NUMERIC(40, 12) NOT NULL CHECK (quantity_base > 0),
+      unit_cost_entered NUMERIC(16, 2) NOT NULL DEFAULT 0 CHECK (unit_cost_entered >= 0),
+      unit_cost_base NUMERIC(20, 6) NOT NULL DEFAULT 0 CHECK (unit_cost_base >= 0),
+      balance_after NUMERIC(40, 12) NOT NULL CHECK (balance_after >= 0),
+      reference TEXT NOT NULL DEFAULT '',
+      notes TEXT NOT NULL DEFAULT '',
+      created_by BIGINT NOT NULL REFERENCES users(id),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE SEQUENCE IF NOT EXISTS supplier_code_seq;
+    CREATE SEQUENCE IF NOT EXISTS purchase_request_number_seq;
+    CREATE SEQUENCE IF NOT EXISTS purchase_order_number_seq;
+    CREATE TABLE IF NOT EXISTS suppliers (
+      id BIGSERIAL PRIMARY KEY,
+      supplier_code TEXT NOT NULL UNIQUE DEFAULT ('BBM-SUP-' || nextval('supplier_code_seq')::TEXT),
+      company_name TEXT NOT NULL,
+      contact_name TEXT NOT NULL DEFAULT '',
+      phone TEXT NOT NULL DEFAULT '',
+      whatsapp TEXT NOT NULL DEFAULT '',
+      email TEXT NOT NULL DEFAULT '',
+      address TEXT NOT NULL DEFAULT '',
+      city_province TEXT NOT NULL DEFAULT '',
+      category TEXT NOT NULL DEFAULT '',
+      tax_id TEXT NOT NULL DEFAULT '',
+      bank_details TEXT NOT NULL DEFAULT '',
+      payment_terms TEXT NOT NULL DEFAULT '',
+      lead_time_days INTEGER CHECK (lead_time_days IS NULL OR lead_time_days >= 0),
+      notes TEXT NOT NULL DEFAULT '',
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_by BIGINT REFERENCES users(id),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS procurement_settings (
+      id SMALLINT PRIMARY KEY CHECK (id = 1),
+      manager_approval_limit NUMERIC(16, 2) NOT NULL DEFAULT 0 CHECK (manager_approval_limit >= 0),
+      updated_by BIGINT REFERENCES users(id),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    INSERT INTO procurement_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+    CREATE TABLE IF NOT EXISTS purchase_requests (
+      id BIGSERIAL PRIMARY KEY,
+      request_number TEXT NOT NULL UNIQUE,
+      requester_id BIGINT NOT NULL REFERENCES users(id),
+      division TEXT NOT NULL DEFAULT '',
+      category TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      urgency TEXT NOT NULL CHECK (urgency IN ('low', 'normal', 'high', 'urgent')),
+      needed_by DATE,
+      project_name TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'submitted'
+        CHECK (status IN ('draft', 'submitted', 'under_review', 'approved', 'rejected', 'converted_to_po', 'cancelled')),
+      rejection_reason TEXT NOT NULL DEFAULT '',
+      reviewed_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS purchase_request_items (
+      id BIGSERIAL PRIMARY KEY,
+      request_id BIGINT NOT NULL REFERENCES purchase_requests(id),
+      inventory_item_id BIGINT REFERENCES inventory_items(id),
+      item_name TEXT NOT NULL,
+      quantity NUMERIC(20, 6) NOT NULL CHECK (quantity > 0),
+      unit TEXT NOT NULL,
+      estimated_unit_price NUMERIC(16, 2) NOT NULL DEFAULT 0 CHECK (estimated_unit_price >= 0),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS purchase_request_approvals (
+      id BIGSERIAL PRIMARY KEY,
+      request_id BIGINT NOT NULL REFERENCES purchase_requests(id),
+      approver_id BIGINT NOT NULL REFERENCES users(id),
+      decision TEXT NOT NULL CHECK (decision IN ('under_review', 'approved', 'rejected')),
+      note TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS supplier_quotations (
+      id BIGSERIAL PRIMARY KEY,
+      request_id BIGINT NOT NULL REFERENCES purchase_requests(id),
+      supplier_id BIGINT NOT NULL REFERENCES suppliers(id),
+      supplier_quote_number TEXT NOT NULL DEFAULT '',
+      valid_until DATE,
+      notes TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'available'
+        CHECK (status IN ('available', 'selected', 'not_selected')),
+      submitted_by BIGINT NOT NULL REFERENCES users(id),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS supplier_quotation_items (
+      id BIGSERIAL PRIMARY KEY,
+      quotation_id BIGINT NOT NULL REFERENCES supplier_quotations(id),
+      request_item_id BIGINT NOT NULL REFERENCES purchase_request_items(id),
+      item_name TEXT NOT NULL,
+      quantity NUMERIC(20, 6) NOT NULL CHECK (quantity > 0),
+      unit TEXT NOT NULL,
+      unit_price NUMERIC(16, 2) NOT NULL CHECK (unit_price >= 0),
+      UNIQUE (quotation_id, request_item_id)
+    );
+    CREATE TABLE IF NOT EXISTS purchase_orders (
+      id BIGSERIAL PRIMARY KEY,
+      po_number TEXT NOT NULL UNIQUE,
+      request_id BIGINT NOT NULL REFERENCES purchase_requests(id),
+      quotation_id BIGINT NOT NULL REFERENCES supplier_quotations(id),
+      supplier_id BIGINT NOT NULL REFERENCES suppliers(id),
+      status TEXT NOT NULL CHECK (status IN ('pending_approval', 'issued', 'rejected', 'cancelled')),
+      created_by BIGINT NOT NULL REFERENCES users(id),
+      issued_by BIGINT REFERENCES users(id),
+      rejection_reason TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      issued_at TIMESTAMPTZ
+    );
+    CREATE TABLE IF NOT EXISTS purchase_order_items (
+      id BIGSERIAL PRIMARY KEY,
+      purchase_order_id BIGINT NOT NULL REFERENCES purchase_orders(id),
+      request_item_id BIGINT NOT NULL REFERENCES purchase_request_items(id),
+      item_name TEXT NOT NULL,
+      quantity NUMERIC(20, 6) NOT NULL CHECK (quantity > 0),
+      unit TEXT NOT NULL,
+      unit_price NUMERIC(16, 2) NOT NULL CHECK (unit_price >= 0),
+      UNIQUE (purchase_order_id, request_item_id)
+    );
+    CREATE TABLE IF NOT EXISTS purchase_order_approvals (
+      id BIGSERIAL PRIMARY KEY,
+      purchase_order_id BIGINT NOT NULL REFERENCES purchase_orders(id),
+      approver_id BIGINT NOT NULL REFERENCES users(id),
+      decision TEXT NOT NULL CHECK (decision IN ('submitted', 'approved', 'rejected')),
+      note TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
     CREATE TABLE IF NOT EXISTS login_rate_limits (
       ip_address TEXT PRIMARY KEY,
       attempts INTEGER NOT NULL,
@@ -158,8 +345,40 @@ async function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS task_progress_updates_task_idx ON task_progress_updates(task_id, submitted_at DESC);
     CREATE INDEX IF NOT EXISTS documents_created_idx ON documents(created_at DESC);
     CREATE INDEX IF NOT EXISTS audit_logs_created_idx ON audit_logs(created_at DESC);
+    CREATE INDEX IF NOT EXISTS inventory_items_category_idx ON inventory_items(category_id, is_active);
+    CREATE INDEX IF NOT EXISTS inventory_movements_item_idx ON inventory_movements(item_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS inventory_movements_warehouse_idx ON inventory_movements(warehouse_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS suppliers_name_idx ON suppliers(company_name);
+    CREATE INDEX IF NOT EXISTS purchase_requests_status_date_idx ON purchase_requests(status, created_at DESC);
+    CREATE INDEX IF NOT EXISTS purchase_requests_requester_date_idx ON purchase_requests(requester_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS purchase_request_items_request_idx ON purchase_request_items(request_id);
+    CREATE INDEX IF NOT EXISTS purchase_request_approvals_request_idx ON purchase_request_approvals(request_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS supplier_quotations_request_idx ON supplier_quotations(request_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS supplier_quotation_items_quote_idx ON supplier_quotation_items(quotation_id);
+    CREATE INDEX IF NOT EXISTS purchase_orders_status_date_idx ON purchase_orders(status, created_at DESC);
+    CREATE UNIQUE INDEX IF NOT EXISTS purchase_orders_one_active_per_request_idx
+      ON purchase_orders(request_id) WHERE status IN ('pending_approval', 'issued');
+    CREATE INDEX IF NOT EXISTS purchase_order_items_order_idx ON purchase_order_items(purchase_order_id);
+    CREATE INDEX IF NOT EXISTS purchase_order_approvals_order_idx ON purchase_order_approvals(purchase_order_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS login_rate_limits_reset_idx ON login_rate_limits(reset_at);
     CREATE INDEX IF NOT EXISTS app_sessions_expire_idx ON app_sessions(expire);
+  `);
+
+  await pool.query(`
+    INSERT INTO inventory_categories (name, description)
+    VALUES
+      ('RAW MATERIAL', 'Bahan baku produksi'),
+      ('SUPPORTING MATERIAL', 'Bahan pendukung produksi'),
+      ('FINISHED GOODS', 'Produk jadi'),
+      ('SPARE PARTS & CONSUMABLES', 'Suku cadang dan bahan habis pakai')
+    ON CONFLICT (name) DO NOTHING;
+    INSERT INTO warehouses (name, location)
+    VALUES
+      ('Gudang bahan baku', ''),
+      ('Gudang bahan pendukung', ''),
+      ('Gudang produk jadi', ''),
+      ('Area penyimpanan produksi', '')
+    ON CONFLICT (name) DO NOTHING;
   `);
 
   const bootstrapPhone = process.env.BBM_ADMIN_PHONE?.trim();
@@ -606,6 +825,1319 @@ app.get('/api/audit', requireAuth, requireRole('DIREKTUR'), asyncRoute(async (_r
   res.json(result.rows);
 }));
 
+const INVENTORY_VIEW_ROLES = ['DIREKTUR', 'MANAGER', 'KOMISARIS'];
+const INVENTORY_WRITE_ROLES = ['DIREKTUR', 'MANAGER'];
+function isValidInventoryDecimal(value, maxDecimals = 6) {
+  return new RegExp(`^\\d{1,14}(?:\\.\\d{1,${maxDecimals}})?$`).test(String(value ?? ''));
+}
+
+function isValidInventoryUnit(value) {
+  return /^[A-Z][A-Z0-9 _.-]{0,19}$/.test(value);
+}
+
+function normalizeDecimal(value) {
+  const [whole, fraction = ''] = String(value).split('.');
+  return `${whole.replace(/^0+(?=\d)/, '')}.${fraction.replace(/0+$/, '')}`.replace(/\.$/, '');
+}
+
+async function withInventoryAudit(userId, action, details, ip, operation) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await operation(client);
+    const auditDetails = typeof details === 'function' ? details(result.rows[0]) : details;
+    await client.query(`
+      INSERT INTO audit_logs (user_id, action, details, ip_address)
+      VALUES ($1, $2, $3, $4)
+    `, [userId, action, auditDetails, ip || 'unknown']);
+    await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+app.get('/api/inventory', requireAuth, requireRole(...INVENTORY_VIEW_ROLES), asyncRoute(async (_req, res) => {
+  const [categories, warehouses, items, movements, valuation] = await Promise.all([
+    pool.query(`
+      SELECT id, name, description, is_active, created_at, updated_at
+      FROM inventory_categories
+      ORDER BY name
+    `),
+    pool.query(`
+      SELECT id, name, location, is_active, created_at, updated_at
+      FROM warehouses
+      ORDER BY name
+    `),
+    pool.query(`
+      SELECT i.id, i.sku, i.name, i.category_id, c.name AS category_name,
+             i.description, i.base_unit, i.alternate_unit, i.conversion_factor,
+             i.min_stock, i.max_stock, i.reference_price, i.default_warehouse_id,
+             w.name AS default_warehouse_name, i.is_active,
+             COALESCE(SUM(b.on_hand), 0)::TEXT AS total_stock,
+             COALESCE(SUM(b.on_hand * b.average_cost), 0)::TEXT AS total_value,
+             CASE WHEN COALESCE(SUM(b.on_hand), 0) <= i.min_stock THEN TRUE ELSE FALSE END AS is_low_stock,
+             i.created_at, i.updated_at
+      FROM inventory_items i
+      JOIN inventory_categories c ON c.id = i.category_id
+      LEFT JOIN warehouses w ON w.id = i.default_warehouse_id
+      LEFT JOIN inventory_balances b ON b.item_id = i.id
+      GROUP BY i.id, c.name, w.name
+      ORDER BY i.name
+    `),
+    pool.query(`
+      SELECT m.id, m.movement_type, m.quantity::TEXT, m.unit, m.quantity_base::TEXT,
+             m.unit_cost_base::TEXT, m.balance_after::TEXT, m.reference, m.notes, m.created_at,
+             i.sku, i.name AS item_name, w.name AS warehouse_name, u.name AS created_by_name
+      FROM inventory_movements m
+      JOIN inventory_items i ON i.id = m.item_id
+      JOIN warehouses w ON w.id = m.warehouse_id
+      JOIN users u ON u.id = m.created_by
+      ORDER BY m.created_at DESC, m.id DESC
+      LIMIT 30
+    `),
+    pool.query(`
+      SELECT COALESCE(SUM(b.on_hand * b.average_cost), 0)::TEXT AS total_value
+      FROM inventory_balances b
+      JOIN inventory_items i ON i.id = b.item_id
+      WHERE i.is_active = TRUE
+    `)
+  ]);
+  const activeItems = items.rows.filter((item) => item.is_active);
+  const lowStockItems = activeItems.filter((item) => item.is_low_stock);
+  res.json({
+    summary: {
+      totalItems: activeItems.length,
+      lowStockItems: lowStockItems.length,
+      outOfStockItems: activeItems.filter((item) => normalizeDecimal(item.total_stock) === '0').length,
+      totalInventoryValue: valuation.rows[0].total_value
+    },
+    categories: categories.rows,
+    warehouses: warehouses.rows,
+    items: items.rows,
+    movements: movements.rows
+  });
+}));
+
+app.post('/api/inventory/categories', requireAuth, requireRole(...INVENTORY_WRITE_ROLES), asyncRoute(async (req, res) => {
+  const name = String(req.body?.name || '').trim();
+  const description = String(req.body?.description || '').trim();
+  if (name.length < 2 || name.length > 80 || description.length > 500) {
+    return res.status(400).json({ error: 'Nama kategori (2-80 karakter) dan deskripsi yang valid wajib diisi.' });
+  }
+  const result = await withInventoryAudit(
+    req.session.user.id,
+    'INVENTORY_CATEGORY_CREATED',
+    `Created category ${name}.`,
+    req.ip,
+    (client) => client.query(`
+      INSERT INTO inventory_categories (name, description, created_by)
+      VALUES ($1, $2, $3)
+      RETURNING id, name, description, is_active, created_at, updated_at
+    `, [name, description, req.session.user.id])
+  );
+  res.status(201).json(result.rows[0]);
+}));
+
+app.patch('/api/inventory/categories/:id', requireAuth, requireRole(...INVENTORY_WRITE_ROLES), asyncRoute(async (req, res) => {
+  const categoryId = Number(req.params.id);
+  const name = String(req.body?.name || '').trim();
+  const description = String(req.body?.description || '').trim();
+  const isActive = req.body?.is_active;
+  if (!Number.isSafeInteger(categoryId) || categoryId <= 0
+    || name.length < 2 || name.length > 80 || description.length > 500 || typeof isActive !== 'boolean') {
+    return res.status(400).json({ error: 'Nama, deskripsi, dan status kategori tidak valid.' });
+  }
+  const result = await withInventoryAudit(
+    req.session.user.id,
+    'INVENTORY_CATEGORY_UPDATED',
+    `Updated category #${categoryId}.`,
+    req.ip,
+    async (client) => {
+      const updated = await client.query(`
+        UPDATE inventory_categories
+        SET name = $1, description = $2, is_active = $3, updated_at = NOW()
+        WHERE id = $4
+        RETURNING id, name, description, is_active, updated_at
+      `, [name, description, isActive, categoryId]);
+      if (!updated.rowCount) {
+        const error = new Error('Kategori tidak ditemukan.');
+        error.status = 404;
+        throw error;
+      }
+      return updated;
+    }
+  );
+  res.json(result.rows[0]);
+}));
+
+app.post('/api/inventory/warehouses', requireAuth, requireRole(...INVENTORY_WRITE_ROLES), asyncRoute(async (req, res) => {
+  const name = String(req.body?.name || '').trim();
+  const location = String(req.body?.location || '').trim();
+  if (name.length < 2 || name.length > 100 || location.length > 250) {
+    return res.status(400).json({ error: 'Nama gudang dan lokasi yang valid wajib diisi.' });
+  }
+  const result = await withInventoryAudit(
+    req.session.user.id,
+    'INVENTORY_WAREHOUSE_CREATED',
+    `Created warehouse ${name}.`,
+    req.ip,
+    (client) => client.query(`
+      INSERT INTO warehouses (name, location, created_by)
+      VALUES ($1, $2, $3)
+      RETURNING id, name, location, is_active, created_at, updated_at
+    `, [name, location, req.session.user.id])
+  );
+  res.status(201).json(result.rows[0]);
+}));
+
+app.patch('/api/inventory/warehouses/:id', requireAuth, requireRole(...INVENTORY_WRITE_ROLES), asyncRoute(async (req, res) => {
+  const warehouseId = Number(req.params.id);
+  const name = String(req.body?.name || '').trim();
+  const location = String(req.body?.location || '').trim();
+  const isActive = req.body?.is_active;
+  if (!Number.isSafeInteger(warehouseId) || warehouseId <= 0
+    || name.length < 2 || name.length > 100 || location.length > 250 || typeof isActive !== 'boolean') {
+    return res.status(400).json({ error: 'Nama, lokasi, dan status gudang tidak valid.' });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const locked = await client.query('SELECT id FROM warehouses WHERE id = $1 FOR UPDATE', [warehouseId]);
+    if (!locked.rowCount) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Gudang tidak ditemukan.' });
+    }
+    if (!isActive) {
+      const stock = await client.query(
+        'SELECT EXISTS (SELECT 1 FROM inventory_balances WHERE warehouse_id = $1 AND on_hand > 0) AS has_stock',
+        [warehouseId]
+      );
+      if (stock.rows[0].has_stock) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ error: 'Gudang masih memiliki stok dan tidak dapat dinonaktifkan.' });
+      }
+    }
+    const result = await client.query(`
+      UPDATE warehouses
+      SET name = $1, location = $2, is_active = $3, updated_at = NOW()
+      WHERE id = $4
+      RETURNING id, name, location, is_active, updated_at
+    `, [name, location, isActive, warehouseId]);
+    await client.query(`
+      INSERT INTO audit_logs (user_id, action, details, ip_address)
+      VALUES ($1, 'INVENTORY_WAREHOUSE_UPDATED', $2, $3)
+    `, [req.session.user.id, `Updated warehouse #${warehouseId}.`, req.ip || 'unknown']);
+    await client.query('COMMIT');
+    res.json(result.rows[0]);
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}));
+
+app.post('/api/inventory/items', requireAuth, requireRole(...INVENTORY_WRITE_ROLES), asyncRoute(async (req, res) => {
+  const body = req.body || {};
+  const name = String(body.name || '').trim();
+  const description = String(body.description || '').trim();
+  const baseUnit = String(body.base_unit || '').trim().toUpperCase();
+  const alternateUnit = String(body.alternate_unit || '').trim().toUpperCase() || null;
+  const minStock = String(body.min_stock ?? '0');
+  const maxStock = body.max_stock === '' || body.max_stock == null ? null : String(body.max_stock);
+  const referencePrice = String(body.reference_price ?? '0');
+  const conversionFactor = body.conversion_factor === '' || body.conversion_factor == null
+    ? null
+    : String(body.conversion_factor);
+  if (
+    name.length < 2 || name.length > 120 || description.length > 1000
+    || !isValidInventoryUnit(baseUnit)
+    || (alternateUnit && (!isValidInventoryUnit(alternateUnit) || alternateUnit === baseUnit))
+    || !isValidInventoryDecimal(minStock)
+    || (maxStock !== null && !isValidInventoryDecimal(maxStock))
+    || !isValidInventoryDecimal(referencePrice, 2)
+    || (alternateUnit && (!conversionFactor || !isValidInventoryDecimal(conversionFactor) || Number(conversionFactor) <= 0))
+    || (!alternateUnit && conversionFactor !== null)
+  ) {
+    return res.status(400).json({ error: 'Data barang tidak valid. Periksa nama, satuan, konversi, stok minimum, dan harga.' });
+  }
+  if (maxStock !== null) {
+    const stockLimits = await pool.query(
+      'SELECT $1::NUMERIC >= $2::NUMERIC AS valid',
+      [maxStock, minStock]
+    );
+    if (!stockLimits.rows[0].valid) {
+      return res.status(400).json({ error: 'Stok maksimum tidak boleh kurang dari stok minimum.' });
+    }
+  }
+  const categoryId = Number(body.category_id);
+  const defaultWarehouseId = body.default_warehouse_id ? Number(body.default_warehouse_id) : null;
+  if (!Number.isSafeInteger(categoryId) || categoryId <= 0
+    || (defaultWarehouseId !== null && (!Number.isSafeInteger(defaultWarehouseId) || defaultWarehouseId <= 0))) {
+    return res.status(400).json({ error: 'Kategori atau gudang bawaan tidak valid.' });
+  }
+  const category = await pool.query(
+    'SELECT id FROM inventory_categories WHERE id = $1 AND is_active = TRUE',
+    [categoryId]
+  );
+  if (!category.rowCount) return res.status(400).json({ error: 'Kategori tidak ditemukan atau nonaktif.' });
+  if (defaultWarehouseId !== null) {
+    const warehouse = await pool.query(
+      'SELECT id FROM warehouses WHERE id = $1 AND is_active = TRUE',
+      [defaultWarehouseId]
+    );
+    if (!warehouse.rowCount) return res.status(400).json({ error: 'Gudang bawaan tidak ditemukan atau nonaktif.' });
+  }
+
+  const result = await withInventoryAudit(
+    req.session.user.id,
+    'INVENTORY_ITEM_CREATED',
+    (row) => `Created inventory item ${row.sku}.`,
+    req.ip,
+    (client) => client.query(`
+    INSERT INTO inventory_items (
+      name, category_id, description, base_unit, alternate_unit, conversion_factor,
+      min_stock, max_stock, reference_price, default_warehouse_id, created_by
+    )
+    VALUES ($1, $2, $3, $4, $5, $6, $7::NUMERIC, $8::NUMERIC, $9::NUMERIC, $10, $11)
+    RETURNING id, sku, name, category_id, description, base_unit, alternate_unit,
+              conversion_factor, min_stock, max_stock, reference_price, default_warehouse_id,
+              is_active, created_at, updated_at
+  `, [
+    name, categoryId, description, baseUnit, alternateUnit, conversionFactor,
+    minStock, maxStock, referencePrice, defaultWarehouseId, req.session.user.id
+    ])
+  );
+  res.status(201).json(result.rows[0]);
+}));
+
+app.patch('/api/inventory/items/:id', requireAuth, requireRole(...INVENTORY_WRITE_ROLES), asyncRoute(async (req, res) => {
+  const itemId = Number(req.params.id);
+  const name = String(req.body?.name || '').trim();
+  const description = String(req.body?.description || '').trim();
+  const minStock = String(req.body?.min_stock ?? '');
+  const maxStock = req.body?.max_stock === '' || req.body?.max_stock == null
+    ? null
+    : String(req.body.max_stock);
+  const referencePrice = String(req.body?.reference_price ?? '');
+  const isActive = req.body?.is_active;
+  const categoryId = Number(req.body?.category_id);
+  const defaultWarehouseId = req.body?.default_warehouse_id ? Number(req.body.default_warehouse_id) : null;
+  if (
+    !Number.isSafeInteger(itemId) || itemId <= 0
+    || name.length < 2 || name.length > 120 || description.length > 1000
+    || !isValidInventoryDecimal(minStock)
+    || (maxStock !== null && !isValidInventoryDecimal(maxStock))
+    || !isValidInventoryDecimal(referencePrice, 2)
+    || typeof isActive !== 'boolean'
+    || !Number.isSafeInteger(categoryId) || categoryId <= 0
+    || (defaultWarehouseId !== null && (!Number.isSafeInteger(defaultWarehouseId) || defaultWarehouseId <= 0))
+  ) {
+    return res.status(400).json({ error: 'Data barang tidak valid.' });
+  }
+  const category = await pool.query(
+    'SELECT id FROM inventory_categories WHERE id = $1 AND is_active = TRUE',
+    [categoryId]
+  );
+  if (!category.rowCount) return res.status(400).json({ error: 'Kategori tidak ditemukan atau nonaktif.' });
+  if (defaultWarehouseId !== null) {
+    const warehouse = await pool.query(
+      'SELECT id FROM warehouses WHERE id = $1 AND is_active = TRUE',
+      [defaultWarehouseId]
+    );
+    if (!warehouse.rowCount) return res.status(400).json({ error: 'Gudang bawaan tidak ditemukan atau nonaktif.' });
+  }
+  if (maxStock !== null) {
+    const stockLimits = await pool.query(
+      'SELECT $1::NUMERIC >= $2::NUMERIC AS valid',
+      [maxStock, minStock]
+    );
+    if (!stockLimits.rows[0].valid) {
+      return res.status(400).json({ error: 'Stok maksimum tidak boleh kurang dari stok minimum.' });
+    }
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const locked = await client.query(
+      'SELECT id, sku FROM inventory_items WHERE id = $1 FOR UPDATE',
+      [itemId]
+    );
+    if (!locked.rowCount) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Barang tidak ditemukan.' });
+    }
+    if (!isActive) {
+      const stock = await client.query(
+        'SELECT EXISTS (SELECT 1 FROM inventory_balances WHERE item_id = $1 AND on_hand > 0) AS has_stock',
+        [itemId]
+      );
+      if (stock.rows[0].has_stock) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ error: 'Barang masih memiliki stok dan tidak dapat dinonaktifkan.' });
+      }
+    }
+    const result = await client.query(`
+      UPDATE inventory_items
+      SET name = $1, description = $2, category_id = $3, default_warehouse_id = $4,
+          min_stock = $5::NUMERIC, max_stock = $6::NUMERIC,
+          reference_price = $7::NUMERIC, is_active = $8, updated_at = NOW()
+      WHERE id = $9
+      RETURNING id, sku, name, description, category_id, default_warehouse_id,
+                min_stock, max_stock, reference_price, is_active, updated_at
+    `, [name, description, categoryId, defaultWarehouseId, minStock, maxStock, referencePrice, isActive, itemId]);
+    await client.query(`
+      INSERT INTO audit_logs (user_id, action, details, ip_address)
+      VALUES ($1, 'INVENTORY_ITEM_UPDATED', $2, $3)
+    `, [req.session.user.id, `Updated inventory item ${result.rows[0].sku}.`, req.ip || 'unknown']);
+    await client.query('COMMIT');
+    res.json(result.rows[0]);
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}));
+
+app.post('/api/inventory/movements', requireAuth, requireRole(...INVENTORY_WRITE_ROLES), asyncRoute(async (req, res) => {
+  const body = req.body || {};
+  const movementType = String(body.movement_type || '').toUpperCase();
+  const idempotencyKey = String(body.idempotency_key || '');
+  const itemId = Number(body.item_id);
+  const warehouseId = Number(body.warehouse_id);
+  const quantity = String(body.quantity ?? '');
+  const unit = String(body.unit || '').trim().toUpperCase();
+  const unitCost = String(body.unit_cost ?? '0');
+  const reference = String(body.reference || '').trim();
+  const notes = String(body.notes || '').trim();
+  if (
+    !['IN', 'OUT'].includes(movementType)
+    || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(idempotencyKey)
+    || !Number.isSafeInteger(itemId) || itemId <= 0
+    || !Number.isSafeInteger(warehouseId) || warehouseId <= 0
+    || !isValidInventoryDecimal(quantity, 6) || Number(quantity) <= 0
+    || !isValidInventoryDecimal(unitCost, 2)
+    || (movementType === 'OUT' && normalizeDecimal(unitCost) !== '0')
+    || reference.length > 120 || notes.length > 1000
+  ) {
+    return res.status(400).json({ error: 'Data mutasi stok tidak valid.' });
+  }
+
+  const client = await pool.connect();
+  const matchesMovement = (movement) => (
+    String(movement.created_by) === String(req.session.user.id)
+    && movement.movement_type === movementType
+    && String(movement.item_id) === String(itemId)
+    && String(movement.warehouse_id) === String(warehouseId)
+    && normalizeDecimal(movement.quantity) === normalizeDecimal(quantity)
+    && movement.unit === unit
+    && normalizeDecimal(movement.unit_cost_entered) === normalizeDecimal(unitCost)
+    && movement.reference === reference
+    && movement.notes === notes
+  );
+  try {
+    await client.query('BEGIN');
+    const existing = await client.query(
+      'SELECT * FROM inventory_movements WHERE idempotency_key = $1 FOR UPDATE',
+      [idempotencyKey]
+    );
+    if (existing.rowCount) {
+      if (!matchesMovement(existing.rows[0])) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ error: 'Kunci permintaan sudah digunakan untuk transaksi berbeda.' });
+      }
+      await client.query('COMMIT');
+      return res.json({
+        success: true,
+        duplicate: true,
+        id: existing.rows[0].id,
+        balance_after: existing.rows[0].balance_after
+      });
+    }
+
+    const itemResult = await client.query(`
+      SELECT id, base_unit, alternate_unit, conversion_factor::TEXT
+      FROM inventory_items
+      WHERE id = $1 AND is_active = TRUE
+      FOR SHARE
+    `, [itemId]);
+    if (!itemResult.rowCount) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Barang tidak ditemukan atau nonaktif.' });
+    }
+    const item = itemResult.rows[0];
+    let conversionFactor = '1';
+    if (unit === item.base_unit) {
+      conversionFactor = '1';
+    } else if (unit === item.alternate_unit && item.conversion_factor) {
+      conversionFactor = item.conversion_factor;
+    } else {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Satuan mutasi tidak sesuai dengan satuan barang.' });
+    }
+    const warehouse = await client.query(
+      'SELECT id FROM warehouses WHERE id = $1 AND is_active = TRUE FOR SHARE',
+      [warehouseId]
+    );
+    if (!warehouse.rowCount) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Gudang tidak ditemukan atau nonaktif.' });
+    }
+    const quantityResult = await client.query(
+      'SELECT ($1::NUMERIC * $2::NUMERIC)::TEXT AS quantity_base',
+      [quantity, conversionFactor]
+    );
+    const quantityBase = quantityResult.rows[0].quantity_base;
+    await client.query(`
+      INSERT INTO inventory_balances (item_id, warehouse_id)
+      VALUES ($1, $2)
+      ON CONFLICT (item_id, warehouse_id) DO NOTHING
+    `, [itemId, warehouseId]);
+    const balanceResult = await client.query(`
+      SELECT on_hand::TEXT, average_cost::TEXT
+      FROM inventory_balances
+      WHERE item_id = $1 AND warehouse_id = $2
+      FOR UPDATE
+    `, [itemId, warehouseId]);
+    const balance = balanceResult.rows[0];
+    let unitCostBase;
+    if (movementType === 'IN') {
+      const costResult = await client.query(
+        'SELECT ($1::NUMERIC / $2::NUMERIC)::NUMERIC(20, 6)::TEXT AS unit_cost_base',
+        [unitCost, conversionFactor]
+      );
+      unitCostBase = costResult.rows[0].unit_cost_base;
+      const updatedBalance = await client.query(`
+        UPDATE inventory_balances
+        SET on_hand = on_hand + $1::NUMERIC,
+            average_cost = CASE
+              WHEN on_hand + $1::NUMERIC = 0 THEN $2::NUMERIC
+              ELSE ((on_hand * average_cost) + ($1::NUMERIC * $2::NUMERIC))
+                   / (on_hand + $1::NUMERIC)
+            END,
+            updated_at = NOW()
+        WHERE item_id = $3 AND warehouse_id = $4
+        RETURNING on_hand::TEXT
+      `, [quantityBase, unitCostBase, itemId, warehouseId]);
+      balance.on_hand = updatedBalance.rows[0].on_hand;
+    } else {
+      const sufficient = await client.query(
+        'SELECT on_hand >= $1::NUMERIC AS sufficient FROM inventory_balances WHERE item_id = $2 AND warehouse_id = $3',
+        [quantityBase, itemId, warehouseId]
+      );
+      if (!sufficient.rows[0].sufficient) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'Stok tidak mencukupi. Pengeluaran dibatalkan.' });
+      }
+      unitCostBase = balance.average_cost;
+      const updatedBalance = await client.query(`
+        UPDATE inventory_balances
+        SET on_hand = on_hand - $1::NUMERIC, updated_at = NOW()
+        WHERE item_id = $2 AND warehouse_id = $3
+        RETURNING on_hand::TEXT
+      `, [quantityBase, itemId, warehouseId]);
+      balance.on_hand = updatedBalance.rows[0].on_hand;
+    }
+
+    const movement = await client.query(`
+      INSERT INTO inventory_movements (
+        idempotency_key, item_id, warehouse_id, movement_type, quantity, unit,
+        quantity_base, unit_cost_entered, unit_cost_base, balance_after, reference, notes, created_by
+      )
+      VALUES ($1, $2, $3, $4, $5::NUMERIC, $6, $7::NUMERIC, $8::NUMERIC,
+              $9::NUMERIC, $10::NUMERIC, $11, $12, $13)
+      RETURNING id, balance_after::TEXT
+    `, [
+      idempotencyKey, itemId, warehouseId, movementType, quantity, unit,
+      quantityBase, unitCost, unitCostBase, balance.on_hand, reference, notes, req.session.user.id
+    ]);
+    await client.query(`
+      INSERT INTO audit_logs (user_id, action, details, ip_address)
+      VALUES ($1, $2, $3, $4)
+    `, [
+      req.session.user.id,
+      `INVENTORY_STOCK_${movementType}`,
+      `${movementType} ${quantity} ${unit} of item #${itemId} at warehouse #${warehouseId}.`,
+      req.ip || 'unknown'
+    ]);
+    await client.query('COMMIT');
+    res.status(201).json({
+      success: true,
+      id: movement.rows[0].id,
+      balance_after: movement.rows[0].balance_after
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    if (error.code === '23505') {
+      const duplicate = await pool.query(
+        'SELECT * FROM inventory_movements WHERE idempotency_key = $1',
+        [idempotencyKey]
+      );
+      if (duplicate.rowCount && matchesMovement(duplicate.rows[0])) {
+        return res.json({
+          success: true,
+          duplicate: true,
+          id: duplicate.rows[0].id,
+          balance_after: duplicate.rows[0].balance_after
+        });
+      }
+      if (duplicate.rowCount) {
+        return res.status(409).json({ error: 'Kunci permintaan sudah digunakan untuk transaksi berbeda.' });
+      }
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
+}));
+
+const PROCUREMENT_VIEW_ROLES = ['DIREKTUR', 'MANAGER', 'KOMISARIS', 'KARYAWAN'];
+const PROCUREMENT_WRITE_ROLES = ['DIREKTUR', 'MANAGER', 'KARYAWAN'];
+const PROCUREMENT_APPROVER_ROLES = ['DIREKTUR', 'MANAGER'];
+
+app.get('/api/procurement', requireAuth, requireRole(...PROCUREMENT_VIEW_ROLES), asyncRoute(async (req, res) => {
+  const isDirector = req.session.user.role === 'DIREKTUR';
+  const canReview = ['DIREKTUR', 'MANAGER', 'KOMISARIS'].includes(req.session.user.role);
+  const [suppliers, requests, settings, quotations, purchaseOrders] = await Promise.all([
+    pool.query(`
+      SELECT id, supplier_code, company_name, contact_name, phone, whatsapp, email, address,
+             city_province, category, tax_id, ${isDirector ? 'bank_details' : "''::TEXT AS bank_details"},
+             payment_terms, lead_time_days, notes, is_active, created_at, updated_at
+      FROM suppliers
+      ORDER BY company_name
+    `),
+    pool.query(`
+      SELECT pr.id, pr.requester_id, pr.request_number, pr.division, pr.category, pr.reason, pr.urgency,
+             pr.needed_by, pr.project_name, pr.status, pr.rejection_reason,
+             pr.created_at, pr.updated_at, pr.reviewed_at,
+             u.name AS requester_name, u.role AS requester_role,
+             COALESCE(lines.items, '[]'::JSON) AS items,
+             COALESCE(lines.total, 0)::TEXT AS total_estimate,
+             COALESCE(approvals.history, '[]'::JSON) AS approval_history
+      FROM purchase_requests pr
+      JOIN users u ON u.id = pr.requester_id
+      LEFT JOIN LATERAL (
+        SELECT json_agg(json_build_object(
+          'id', pri.id,
+          'inventory_item_id', pri.inventory_item_id,
+          'item_name', pri.item_name,
+          'quantity', pri.quantity::TEXT,
+          'unit', pri.unit,
+          'estimated_unit_price', pri.estimated_unit_price::TEXT,
+          'line_total', (pri.quantity * pri.estimated_unit_price)::TEXT
+        ) ORDER BY pri.id) AS items,
+        SUM(pri.quantity * pri.estimated_unit_price) AS total
+        FROM purchase_request_items pri
+        WHERE pri.request_id = pr.id
+      ) lines ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT json_agg(json_build_object(
+          'decision', pra.decision,
+          'note', pra.note,
+          'approver_name', approver.name,
+          'created_at', pra.created_at
+        ) ORDER BY pra.created_at DESC, pra.id DESC) AS history
+        FROM purchase_request_approvals pra
+        JOIN users approver ON approver.id = pra.approver_id
+        WHERE pra.request_id = pr.id
+      ) approvals ON TRUE
+      WHERE ($1::BOOLEAN OR pr.requester_id = $2)
+      ORDER BY pr.created_at DESC, pr.id DESC
+      LIMIT 200
+    `, [['DIREKTUR', 'MANAGER', 'KOMISARIS'].includes(req.session.user.role), req.session.user.id]),
+    pool.query('SELECT manager_approval_limit::TEXT FROM procurement_settings WHERE id = 1'),
+    pool.query(`
+      SELECT q.id, q.request_id, q.supplier_id, q.supplier_quote_number, q.valid_until,
+             q.notes, q.status, q.created_at, q.updated_at, s.company_name, s.supplier_code,
+             pr.request_number,
+             COALESCE(lines.items, '[]'::JSON) AS items,
+             COALESCE(lines.total, 0)::TEXT AS total
+      FROM supplier_quotations q
+      JOIN suppliers s ON s.id = q.supplier_id
+      JOIN purchase_requests pr ON pr.id = q.request_id
+      LEFT JOIN LATERAL (
+        SELECT json_agg(json_build_object(
+          'request_item_id', qi.request_item_id,
+          'item_name', qi.item_name,
+          'quantity', qi.quantity::TEXT,
+          'unit', qi.unit,
+          'unit_price', qi.unit_price::TEXT,
+          'line_total', (qi.quantity * qi.unit_price)::TEXT
+        ) ORDER BY qi.id) AS items,
+        SUM(qi.quantity * qi.unit_price) AS total
+        FROM supplier_quotation_items qi
+        WHERE qi.quotation_id = q.id
+      ) lines ON TRUE
+      WHERE $1::BOOLEAN
+      ORDER BY q.request_id, lines.total ASC NULLS LAST, q.created_at DESC, q.id DESC
+      LIMIT 500
+    `, [canReview]),
+    pool.query(`
+      SELECT po.id, po.po_number, po.request_id, po.quotation_id, po.supplier_id,
+             po.status, po.created_by, po.issued_by, po.rejection_reason,
+             po.created_at, po.updated_at, po.issued_at,
+             s.company_name, s.supplier_code, pr.request_number, creator.name AS creator_name,
+             issuer.name AS issuer_name,
+             COALESCE(lines.items, '[]'::JSON) AS items,
+             COALESCE(lines.total, 0)::TEXT AS total,
+             COALESCE(history.entries, '[]'::JSON) AS approval_history
+      FROM purchase_orders po
+      JOIN suppliers s ON s.id = po.supplier_id
+      JOIN purchase_requests pr ON pr.id = po.request_id
+      JOIN users creator ON creator.id = po.created_by
+      LEFT JOIN users issuer ON issuer.id = po.issued_by
+      LEFT JOIN LATERAL (
+        SELECT json_agg(json_build_object(
+          'item_name', poi.item_name,
+          'quantity', poi.quantity::TEXT,
+          'unit', poi.unit,
+          'unit_price', poi.unit_price::TEXT,
+          'line_total', (poi.quantity * poi.unit_price)::TEXT
+        ) ORDER BY poi.id) AS items,
+        SUM(poi.quantity * poi.unit_price) AS total
+        FROM purchase_order_items poi
+        WHERE poi.purchase_order_id = po.id
+      ) lines ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT json_agg(json_build_object(
+          'decision', poa.decision,
+          'note', poa.note,
+          'approver_name', approver.name,
+          'created_at', poa.created_at
+        ) ORDER BY poa.created_at DESC, poa.id DESC) AS entries
+        FROM purchase_order_approvals poa
+        JOIN users approver ON approver.id = poa.approver_id
+        WHERE poa.purchase_order_id = po.id
+      ) history ON TRUE
+      WHERE $1::BOOLEAN
+      ORDER BY po.created_at DESC, po.id DESC
+      LIMIT 500
+    `, [canReview])
+  ]);
+  res.json({
+    suppliers: suppliers.rows,
+    requests: requests.rows,
+    quotations: quotations.rows,
+    purchaseOrders: purchaseOrders.rows,
+    managerApprovalLimit: isDirector ? (settings.rows[0]?.manager_approval_limit || '0') : null
+  });
+}));
+
+app.post('/api/procurement/suppliers', requireAuth, requireRole('DIREKTUR', 'MANAGER'), asyncRoute(async (req, res) => {
+  const body = req.body || {};
+  const companyName = String(body.company_name || '').trim();
+  const contactName = String(body.contact_name || '').trim();
+  const phone = String(body.phone || '').trim();
+  const whatsapp = String(body.whatsapp || '').trim();
+  const email = String(body.email || '').trim();
+  const address = String(body.address || '').trim();
+  const cityProvince = String(body.city_province || '').trim();
+  const category = String(body.category || '').trim();
+  const taxId = String(body.tax_id || '').trim();
+  const bankDetails = req.session.user.role === 'DIREKTUR' ? String(body.bank_details || '').trim() : '';
+  const paymentTerms = String(body.payment_terms || '').trim();
+  const notes = String(body.notes || '').trim();
+  const leadTime = body.lead_time_days === '' || body.lead_time_days == null ? null : Number(body.lead_time_days);
+  if (
+    companyName.length < 2 || companyName.length > 160
+    || contactName.length > 120 || phone.length > 40 || whatsapp.length > 40
+    || email.length > 254 || (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
+    || address.length > 500 || cityProvince.length > 120 || category.length > 120
+    || taxId.length > 40 || bankDetails.length > 500 || paymentTerms.length > 160
+    || (leadTime !== null && (!Number.isInteger(leadTime) || leadTime < 0 || leadTime > 3650))
+    || notes.length > 1000
+  ) {
+    return res.status(400).json({ error: 'Data supplier tidak valid. Periksa nama, email, dan batas panjang setiap kolom.' });
+  }
+  const result = await withInventoryAudit(
+    req.session.user.id,
+    'SUPPLIER_CREATED',
+    `Created supplier ${companyName}.`,
+    req.ip,
+    (client) => client.query(`
+      INSERT INTO suppliers (
+        company_name, contact_name, phone, whatsapp, email, address, city_province,
+        category, tax_id, bank_details, payment_terms, lead_time_days, notes, created_by
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+      RETURNING id, supplier_code, company_name, contact_name, phone, whatsapp, email,
+                address, city_province, category, tax_id, bank_details, payment_terms,
+                lead_time_days, notes, is_active, created_at, updated_at
+    `, [
+      companyName, contactName, phone, whatsapp, email, address, cityProvince, category,
+      taxId, bankDetails, paymentTerms, leadTime, notes, req.session.user.id
+    ])
+  );
+  res.status(201).json(result.rows[0]);
+}));
+
+app.patch('/api/procurement/suppliers/:id', requireAuth, requireRole('DIREKTUR', 'MANAGER'), asyncRoute(async (req, res) => {
+  const supplierId = Number(req.params.id);
+  const body = req.body || {};
+  const companyName = String(body.company_name || '').trim();
+  const contactName = String(body.contact_name || '').trim();
+  const phone = String(body.phone || '').trim();
+  const whatsapp = String(body.whatsapp || '').trim();
+  const email = String(body.email || '').trim();
+  const address = String(body.address || '').trim();
+  const cityProvince = String(body.city_province || '').trim();
+  const category = String(body.category || '').trim();
+  const taxId = String(body.tax_id || '').trim();
+  const bankDetails = req.session.user.role === 'DIREKTUR' ? String(body.bank_details || '').trim() : null;
+  const paymentTerms = String(body.payment_terms || '').trim();
+  const notes = String(body.notes || '').trim();
+  const leadTime = body.lead_time_days === '' || body.lead_time_days == null ? null : Number(body.lead_time_days);
+  const isActive = body.is_active;
+  if (
+    !Number.isSafeInteger(supplierId) || supplierId <= 0
+    || companyName.length < 2 || companyName.length > 160
+    || contactName.length > 120 || phone.length > 40 || whatsapp.length > 40
+    || email.length > 254 || (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
+    || address.length > 500 || cityProvince.length > 120 || category.length > 120
+    || taxId.length > 40 || (bankDetails !== null && bankDetails.length > 500)
+    || paymentTerms.length > 160
+    || (leadTime !== null && (!Number.isInteger(leadTime) || leadTime < 0 || leadTime > 3650))
+    || notes.length > 1000 || typeof isActive !== 'boolean'
+  ) {
+    return res.status(400).json({ error: 'Data supplier tidak valid.' });
+  }
+  const result = await withInventoryAudit(
+    req.session.user.id,
+    'SUPPLIER_UPDATED',
+    `Updated supplier #${supplierId}.`,
+    req.ip,
+    async (client) => {
+      const updated = await client.query(`
+        UPDATE suppliers
+        SET company_name = $1, contact_name = $2, phone = $3, whatsapp = $4, email = $5,
+            address = $6, city_province = $7, category = $8, tax_id = $9,
+            bank_details = CASE WHEN $10::TEXT IS NULL THEN bank_details ELSE $10 END,
+            payment_terms = $11, lead_time_days = $12, notes = $13,
+            is_active = $14, updated_at = NOW()
+        WHERE id = $15
+        RETURNING id, supplier_code, company_name, contact_name, phone, whatsapp, email,
+                  address, city_province, category, tax_id, bank_details, payment_terms,
+                  lead_time_days, notes, is_active, updated_at
+      `, [
+        companyName, contactName, phone, whatsapp, email, address, cityProvince, category,
+        taxId, bankDetails, paymentTerms, leadTime, notes, isActive, supplierId
+      ]);
+      if (!updated.rowCount) {
+        const error = new Error('Supplier tidak ditemukan.');
+        error.status = 404;
+        throw error;
+      }
+      return updated;
+    }
+  );
+  if (req.session.user.role !== 'DIREKTUR') delete result.rows[0].bank_details;
+  res.json(result.rows[0]);
+}));
+
+app.put('/api/procurement/settings/manager-approval-limit', requireAuth, requireRole('DIREKTUR'), asyncRoute(async (req, res) => {
+  const value = String(req.body?.manager_approval_limit ?? '');
+  if (!isValidInventoryDecimal(value, 2)) {
+    return res.status(400).json({ error: 'Batas approval Manager harus berupa nominal Rupiah nol atau lebih.' });
+  }
+  const result = await withInventoryAudit(
+    req.session.user.id,
+    'PROCUREMENT_APPROVAL_LIMIT_UPDATED',
+    `Updated Manager approval limit to Rp${value}.`,
+    req.ip,
+    (client) => client.query(`
+      UPDATE procurement_settings
+      SET manager_approval_limit = $1::NUMERIC, updated_by = $2, updated_at = NOW()
+      WHERE id = 1
+      RETURNING manager_approval_limit::TEXT
+    `, [value, req.session.user.id])
+  );
+  res.json({ manager_approval_limit: result.rows[0].manager_approval_limit });
+}));
+
+app.post('/api/procurement/requests', requireAuth, requireRole(...PROCUREMENT_WRITE_ROLES), asyncRoute(async (req, res) => {
+  const body = req.body || {};
+  const division = String(body.division || '').trim();
+  const category = String(body.category || '').trim();
+  const reason = String(body.reason || '').trim();
+  const urgency = String(body.urgency || 'normal');
+  const projectName = String(body.project_name || '').trim();
+  const neededBy = body.needed_by ? String(body.needed_by) : null;
+  const items = body.items;
+  if (
+    division.length > 120 || category.length < 2 || category.length > 120
+    || reason.length < 3 || reason.length > 1500
+    || !['low', 'normal', 'high', 'urgent'].includes(urgency)
+    || projectName.length > 160
+    || (neededBy && !isValidIsoDate(neededBy))
+    || !Array.isArray(items) || items.length < 1 || items.length > 30
+  ) {
+    return res.status(400).json({ error: 'Data PR tidak lengkap atau tidak valid.' });
+  }
+  const normalizedItems = [];
+  for (const item of items) {
+    const itemName = String(item?.item_name || '').trim();
+    const unit = String(item?.unit || '').trim().toUpperCase();
+    const quantity = String(item?.quantity ?? '');
+    const estimatedUnitPrice = String(item?.estimated_unit_price ?? '0');
+    const inventoryItemId = item?.inventory_item_id ? Number(item.inventory_item_id) : null;
+    if (
+      itemName.length < 2 || itemName.length > 160
+      || !isValidInventoryUnit(unit)
+      || !isValidInventoryDecimal(quantity) || normalizeDecimal(quantity) === '0'
+      || !isValidInventoryDecimal(estimatedUnitPrice, 2)
+      || (inventoryItemId !== null && (!Number.isSafeInteger(inventoryItemId) || inventoryItemId <= 0))
+    ) {
+      return res.status(400).json({ error: 'Setiap barang PR wajib memiliki nama, satuan, jumlah, dan estimasi harga yang valid.' });
+    }
+    normalizedItems.push({ itemName, unit, quantity, estimatedUnitPrice, inventoryItemId });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const numberResult = await client.query(`
+      SELECT 'PR-' || TO_CHAR(CURRENT_DATE, 'YYYYMM') || '-' ||
+             LPAD(nextval('purchase_request_number_seq')::TEXT, 6, '0') AS request_number
+    `);
+    const request = await client.query(`
+      INSERT INTO purchase_requests (
+        request_number, requester_id, division, category, reason, urgency, needed_by,
+        project_name, status
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7::DATE, $8, 'submitted')
+      RETURNING id, request_number
+    `, [
+      numberResult.rows[0].request_number, req.session.user.id, division,
+      category, reason, urgency, neededBy, projectName
+    ]);
+    for (const item of normalizedItems) {
+      if (item.inventoryItemId !== null) {
+        const inventoryItem = await client.query(`
+          SELECT name, base_unit, alternate_unit
+          FROM inventory_items
+          WHERE id = $1 AND is_active = TRUE
+        `, [item.inventoryItemId]);
+        if (!inventoryItem.rowCount
+          || ![inventoryItem.rows[0].base_unit, inventoryItem.rows[0].alternate_unit].includes(item.unit)) {
+          const error = new Error('Barang inventory yang dipilih nonaktif atau satuannya tidak sesuai.');
+          error.status = 400;
+          throw error;
+        }
+      }
+      await client.query(`
+        INSERT INTO purchase_request_items (
+          request_id, inventory_item_id, item_name, quantity, unit, estimated_unit_price
+        )
+        VALUES ($1, $2, $3, $4::NUMERIC, $5, $6::NUMERIC)
+      `, [
+        request.rows[0].id, item.inventoryItemId, item.itemName,
+        item.quantity, item.unit, item.estimatedUnitPrice
+      ]);
+    }
+    await client.query(`
+      INSERT INTO audit_logs (user_id, action, details, ip_address)
+      VALUES ($1, 'PURCHASE_REQUEST_SUBMITTED', $2, $3)
+    `, [req.session.user.id, `Submitted purchase request ${request.rows[0].request_number}.`, req.ip || 'unknown']);
+    await client.query('COMMIT');
+    res.status(201).json({ success: true, id: request.rows[0].id, request_number: request.rows[0].request_number });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}));
+
+app.post('/api/procurement/requests/:id/decision', requireAuth, requireRole(...PROCUREMENT_APPROVER_ROLES), asyncRoute(async (req, res) => {
+  const requestId = Number(req.params.id);
+  const decision = String(req.body?.decision || '');
+  const note = String(req.body?.note || '').trim();
+  if (!Number.isSafeInteger(requestId) || requestId <= 0
+    || !['under_review', 'approved', 'rejected'].includes(decision)
+    || note.length > 1000
+    || (decision === 'rejected' && note.length < 3)) {
+    return res.status(400).json({ error: 'Keputusan tidak valid. Penolakan harus menyertakan alasan.' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const request = await client.query(`
+      SELECT pr.id, pr.requester_id, pr.status
+      FROM purchase_requests pr
+      WHERE pr.id = $1
+      FOR UPDATE
+    `, [requestId]);
+    if (!request.rowCount) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'PR tidak ditemukan.' });
+    }
+    const record = request.rows[0];
+    if (String(record.requester_id) === String(req.session.user.id)) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'Anda tidak dapat menyetujui atau meninjau PR yang Anda buat sendiri.' });
+    }
+    if (!['submitted', 'under_review'].includes(record.status)) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'PR ini sudah diproses dan tidak dapat diubah lagi.' });
+    }
+    if (req.session.user.role === 'MANAGER' && decision === 'approved') {
+      const estimate = await client.query(`
+        SELECT COALESCE(SUM(quantity * estimated_unit_price), 0)::TEXT AS total_estimate
+        FROM purchase_request_items
+        WHERE request_id = $1
+      `, [requestId]);
+      const settings = await client.query(
+        'SELECT manager_approval_limit::TEXT FROM procurement_settings WHERE id = 1 FOR SHARE'
+      );
+      const limit = settings.rows[0]?.manager_approval_limit || '0';
+      const withinLimit = await client.query(
+        'SELECT $1::NUMERIC <= $2::NUMERIC AND $2::NUMERIC > 0 AS valid',
+        [estimate.rows[0].total_estimate, limit]
+      );
+      if (!withinLimit.rows[0].valid) {
+        await client.query('ROLLBACK');
+        return res.status(403).json({ error: 'Nilai PR melebihi batas persetujuan Manager. Minta Direktur memeriksa PR ini.' });
+      }
+    }
+    if (decision === 'under_review') {
+      await client.query(`
+        UPDATE purchase_requests SET status = 'under_review', updated_at = NOW()
+        WHERE id = $1
+      `, [requestId]);
+    } else {
+      await client.query(`
+        UPDATE purchase_requests
+        SET status = $1, rejection_reason = $2, reviewed_at = NOW(), updated_at = NOW()
+        WHERE id = $3
+      `, [decision, decision === 'rejected' ? note : '', requestId]);
+    }
+    await client.query(`
+      INSERT INTO purchase_request_approvals (request_id, approver_id, decision, note)
+      VALUES ($1, $2, $3, $4)
+    `, [requestId, req.session.user.id, decision, note]);
+    await client.query(`
+      INSERT INTO audit_logs (user_id, action, details, ip_address)
+      VALUES ($1, $2, $3, $4)
+    `, [
+      req.session.user.id,
+      `PURCHASE_REQUEST_${decision.toUpperCase()}`,
+      `${decision} purchase request #${requestId}${note ? `: ${note}` : ''}`,
+      req.ip || 'unknown'
+    ]);
+    await client.query('COMMIT');
+    res.json({ success: true, status: decision });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}));
+
+app.post('/api/procurement/requests/:id/quotations', requireAuth, requireRole('DIREKTUR', 'MANAGER'), asyncRoute(async (req, res) => {
+  const requestId = Number(req.params.id);
+  const supplierId = Number(req.body?.supplier_id);
+  const quoteNumber = String(req.body?.supplier_quote_number || '').trim();
+  const validUntil = req.body?.valid_until ? String(req.body.valid_until) : null;
+  const notes = String(req.body?.notes || '').trim();
+  const items = req.body?.items;
+  if (!Number.isSafeInteger(requestId) || requestId <= 0
+    || !Number.isSafeInteger(supplierId) || supplierId <= 0
+    || quoteNumber.length > 100 || (validUntil && !isValidIsoDate(validUntil))
+    || notes.length > 1000 || !Array.isArray(items) || items.length < 1 || items.length > 30) {
+    return res.status(400).json({ error: 'Data penawaran tidak lengkap atau tidak valid.' });
+  }
+  const normalizedItems = [];
+  const seenItemIds = new Set();
+  for (const item of items) {
+    const requestItemId = Number(item?.request_item_id);
+    const unitPrice = String(item?.unit_price ?? '');
+    if (!Number.isSafeInteger(requestItemId) || requestItemId <= 0
+      || seenItemIds.has(requestItemId) || !isValidInventoryDecimal(unitPrice, 2)) {
+      return res.status(400).json({ error: 'Barang atau harga penawaran tidak valid.' });
+    }
+    seenItemIds.add(requestItemId);
+    normalizedItems.push({ requestItemId, unitPrice });
+  }
+
+  const result = await withInventoryAudit(
+    req.session.user.id,
+    'SUPPLIER_QUOTATION_CREATED',
+    `Recorded a supplier quotation for purchase request #${requestId}.`,
+    req.ip,
+    async (client) => {
+      const request = await client.query(`
+        SELECT status FROM purchase_requests WHERE id = $1 FOR UPDATE
+      `, [requestId]);
+      if (!request.rowCount) {
+        const error = new Error('PR tidak ditemukan.');
+        error.status = 404;
+        throw error;
+      }
+      if (request.rows[0].status !== 'approved') {
+        const error = new Error('Penawaran hanya dapat dicatat untuk PR yang sudah disetujui dan belum menjadi PO.');
+        error.status = 409;
+        throw error;
+      }
+      const activeOrder = await client.query(`
+        SELECT id FROM purchase_orders
+        WHERE request_id = $1 AND status IN ('pending_approval', 'issued')
+      `, [requestId]);
+      if (activeOrder.rowCount) {
+        const error = new Error('PR ini sudah memiliki PO aktif.');
+        error.status = 409;
+        throw error;
+      }
+      const supplier = await client.query(`
+        SELECT id FROM suppliers WHERE id = $1 AND is_active = TRUE FOR SHARE
+      `, [supplierId]);
+      if (!supplier.rowCount) {
+        const error = new Error('Supplier tidak ditemukan atau sedang nonaktif.');
+        error.status = 400;
+        throw error;
+      }
+      const requestedItems = await client.query(`
+        SELECT id, item_name, quantity::TEXT, unit
+        FROM purchase_request_items
+        WHERE request_id = $1
+        ORDER BY id
+        FOR SHARE
+      `, [requestId]);
+      if (requestedItems.rowCount !== normalizedItems.length
+        || requestedItems.rows.some((requestedItem) => !seenItemIds.has(Number(requestedItem.id)))) {
+        const error = new Error('Penawaran harus mengisi harga untuk seluruh barang pada PR.');
+        error.status = 400;
+        throw error;
+      }
+      const quotation = await client.query(`
+        INSERT INTO supplier_quotations (
+          request_id, supplier_id, supplier_quote_number, valid_until, notes, submitted_by
+        )
+        VALUES ($1, $2, $3, $4::DATE, $5, $6)
+        RETURNING id
+      `, [requestId, supplierId, quoteNumber, validUntil, notes, req.session.user.id]);
+      const itemById = new Map(requestedItems.rows.map((item) => [Number(item.id), item]));
+      for (const quoteItem of normalizedItems) {
+        const requestedItem = itemById.get(quoteItem.requestItemId);
+        await client.query(`
+          INSERT INTO supplier_quotation_items (
+            quotation_id, request_item_id, item_name, quantity, unit, unit_price
+          )
+          VALUES ($1, $2, $3, $4::NUMERIC, $5, $6::NUMERIC)
+        `, [
+          quotation.rows[0].id, requestedItem.id, requestedItem.item_name,
+          requestedItem.quantity, requestedItem.unit, quoteItem.unitPrice
+        ]);
+      }
+      return quotation;
+    }
+  );
+  res.status(201).json({ success: true, id: result.rows[0].id });
+}));
+
+app.post('/api/procurement/requests/:id/purchase-orders', requireAuth, requireRole('DIREKTUR', 'MANAGER'), asyncRoute(async (req, res) => {
+  const requestId = Number(req.params.id);
+  const quotationId = Number(req.body?.quotation_id);
+  if (!Number.isSafeInteger(requestId) || requestId <= 0
+    || !Number.isSafeInteger(quotationId) || quotationId <= 0) {
+    return res.status(400).json({ error: 'PR atau penawaran tidak valid.' });
+  }
+  const isDirector = req.session.user.role === 'DIREKTUR';
+  const result = await withInventoryAudit(
+    req.session.user.id,
+    'PURCHASE_ORDER_CREATED',
+    (order) => `Created purchase order ${order.po_number} with status ${order.status}.`,
+    req.ip,
+    async (client) => {
+      const request = await client.query(`
+        SELECT status FROM purchase_requests WHERE id = $1 FOR UPDATE
+      `, [requestId]);
+      if (!request.rowCount) {
+        const error = new Error('PR tidak ditemukan.');
+        error.status = 404;
+        throw error;
+      }
+      if (request.rows[0].status !== 'approved') {
+        const error = new Error('PO hanya dapat dibuat dari PR yang sudah disetujui dan belum menjadi PO.');
+        error.status = 409;
+        throw error;
+      }
+      const existingOrder = await client.query(`
+        SELECT id FROM purchase_orders
+        WHERE request_id = $1 AND status IN ('pending_approval', 'issued')
+      `, [requestId]);
+      if (existingOrder.rowCount) {
+        const error = new Error('PR ini sudah memiliki PO aktif.');
+        error.status = 409;
+        throw error;
+      }
+      const quotation = await client.query(`
+        SELECT q.id, q.supplier_id, q.status, q.valid_until, s.is_active AS supplier_is_active
+        FROM supplier_quotations q
+        JOIN suppliers s ON s.id = q.supplier_id
+        WHERE q.id = $1 AND q.request_id = $2
+          AND (q.valid_until IS NULL OR q.valid_until >= CURRENT_DATE)
+        FOR UPDATE
+      `, [quotationId, requestId]);
+      if (!quotation.rowCount || quotation.rows[0].status !== 'available'
+        || !quotation.rows[0].supplier_is_active) {
+        const error = new Error('Penawaran tidak tersedia, sudah kedaluwarsa, atau bukan milik PR ini.');
+        error.status = 409;
+        throw error;
+      }
+      const total = await client.query(`
+        SELECT COALESCE(SUM(quantity * unit_price), 0)::TEXT AS total
+        FROM supplier_quotation_items WHERE quotation_id = $1
+      `, [quotationId]);
+      if (req.session.user.role === 'MANAGER') {
+        const settings = await client.query(`
+          SELECT manager_approval_limit::TEXT FROM procurement_settings WHERE id = 1 FOR SHARE
+        `);
+        const limit = settings.rows[0]?.manager_approval_limit || '0';
+        const withinLimit = await client.query(
+          'SELECT $1::NUMERIC <= $2::NUMERIC AND $2::NUMERIC > 0 AS valid',
+          [total.rows[0].total, limit]
+        );
+        if (!withinLimit.rows[0].valid) {
+          const error = new Error('Nilai PO melebihi batas pembuatan PO Manager. Minta Direktur membuat PO.');
+          error.status = 403;
+          throw error;
+        }
+      }
+      const number = await client.query(`
+        SELECT 'PO-' || TO_CHAR(CURRENT_DATE, 'YYYYMM') || '-' ||
+               LPAD(nextval('purchase_order_number_seq')::TEXT, 6, '0') AS po_number
+      `);
+      const status = isDirector ? 'issued' : 'pending_approval';
+      const order = await client.query(`
+        INSERT INTO purchase_orders (
+          po_number, request_id, quotation_id, supplier_id, status, created_by, issued_by, issued_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, CASE WHEN $5 = 'issued' THEN NOW() ELSE NULL END)
+        RETURNING id, po_number, status
+      `, [
+        number.rows[0].po_number, requestId, quotationId, quotation.rows[0].supplier_id,
+        status, req.session.user.id, isDirector ? req.session.user.id : null
+      ]);
+      await client.query(`
+        INSERT INTO purchase_order_items (
+          purchase_order_id, request_item_id, item_name, quantity, unit, unit_price
+        )
+        SELECT $1, request_item_id, item_name, quantity, unit, unit_price
+        FROM supplier_quotation_items
+        WHERE quotation_id = $2
+      `, [order.rows[0].id, quotationId]);
+      await client.query(`
+        UPDATE supplier_quotations SET status = 'selected', updated_at = NOW()
+        WHERE id = $1
+      `, [quotationId]);
+      await client.query(`
+        UPDATE supplier_quotations SET status = 'not_selected', updated_at = NOW()
+        WHERE request_id = $1 AND id <> $2 AND status = 'available'
+      `, [requestId, quotationId]);
+      if (isDirector) {
+        await client.query(`
+          UPDATE purchase_requests SET status = 'converted_to_po', updated_at = NOW()
+          WHERE id = $1
+        `, [requestId]);
+      }
+      await client.query(`
+        INSERT INTO purchase_order_approvals (purchase_order_id, approver_id, decision, note)
+        VALUES ($1, $2, $3, $4)
+      `, [
+        order.rows[0].id, req.session.user.id, isDirector ? 'approved' : 'submitted',
+        isDirector ? 'PO diterbitkan oleh Direktur.' : ''
+      ]);
+      return order;
+    }
+  );
+  res.status(201).json({
+    success: true,
+    id: result.rows[0].id,
+    po_number: result.rows[0].po_number,
+    status: result.rows[0].status
+  });
+}));
+
+app.post('/api/procurement/purchase-orders/:id/decision', requireAuth, requireRole('DIREKTUR'), asyncRoute(async (req, res) => {
+  const orderId = Number(req.params.id);
+  const decision = String(req.body?.decision || '');
+  const note = String(req.body?.note || '').trim();
+  if (!Number.isSafeInteger(orderId) || orderId <= 0
+    || !['approved', 'rejected'].includes(decision) || note.length > 1000
+    || (decision === 'rejected' && note.length < 3)) {
+    return res.status(400).json({ error: 'Keputusan PO tidak valid. Penolakan harus menyertakan alasan.' });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const order = await client.query(`
+      SELECT id, request_id, quotation_id, status, created_by, po_number
+      FROM purchase_orders WHERE id = $1 FOR UPDATE
+    `, [orderId]);
+    if (!order.rowCount) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'PO tidak ditemukan.' });
+    }
+    const record = order.rows[0];
+    if (record.status !== 'pending_approval') {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'PO ini sudah diproses.' });
+    }
+    if (String(record.created_by) === String(req.session.user.id)) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'Pembuat PO tidak dapat menyetujui PO yang sama.' });
+    }
+    if (decision === 'approved') {
+      await client.query(`
+        UPDATE purchase_orders
+        SET status = 'issued', issued_by = $1, issued_at = NOW(), updated_at = NOW()
+        WHERE id = $2
+      `, [req.session.user.id, orderId]);
+      await client.query(`
+        UPDATE purchase_requests SET status = 'converted_to_po', updated_at = NOW()
+        WHERE id = $1 AND status = 'approved'
+      `, [record.request_id]);
+    } else {
+      await client.query(`
+        UPDATE purchase_orders
+        SET status = 'rejected', rejection_reason = $1, updated_at = NOW()
+        WHERE id = $2
+      `, [note, orderId]);
+      await client.query(`
+        UPDATE supplier_quotations SET status = 'available', updated_at = NOW()
+        WHERE request_id = $1
+      `, [record.request_id]);
+    }
+    await client.query(`
+      INSERT INTO purchase_order_approvals (purchase_order_id, approver_id, decision, note)
+      VALUES ($1, $2, $3, $4)
+    `, [orderId, req.session.user.id, decision, note]);
+    await client.query(`
+      INSERT INTO audit_logs (user_id, action, details, ip_address)
+      VALUES ($1, $2, $3, $4)
+    `, [
+      req.session.user.id,
+      `PURCHASE_ORDER_${decision.toUpperCase()}`,
+      `${decision} purchase order ${record.po_number}${note ? `: ${note}` : ''}`,
+      req.ip || 'unknown'
+    ]);
+    await client.query('COMMIT');
+    res.json({ success: true, status: decision === 'approved' ? 'issued' : 'rejected' });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}));
+
 app.get('/api/documents', requireAuth, requireRole('DIREKTUR'), asyncRoute(async (_req, res) => {
   const result = await pool.query(`
     SELECT d.id, d.title, d.category, d.description, d.file_path,
@@ -964,6 +2496,9 @@ app.get('*', (_req, res) => {
 
 app.use((error, _req, res, _next) => {
   console.error(error);
+  if (error.code === '23505' && ['inventory_categories_name_key', 'warehouses_name_key'].includes(error.constraint)) {
+    return res.status(409).json({ error: 'Nama kategori atau gudang tersebut sudah digunakan.' });
+  }
   if (error instanceof multer.MulterError) {
     return res.status(error.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({
       error: error.code === 'LIMIT_FILE_SIZE' ? 'Ukuran file maksimal 3 MB. Kompres file lalu coba kembali.' : 'Upload file tidak valid.'

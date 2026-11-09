@@ -1458,6 +1458,162 @@ select {
   gap: 16px;
 }
 
+[hidden] {
+  display: none !important;
+}
+
+.inventory-summary {
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+}
+
+.inventory-item-row,
+.inventory-movement-row,
+.inventory-admin-row {
+  grid-template-columns: repeat(auto-fit, minmax(125px, 1fr));
+}
+
+.inventory-item-row small,
+.inventory-movement-row small,
+.inventory-admin-row small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+}
+
+.inventory-admin-grid {
+  align-items: start;
+}
+
+.procurement-search-row,
+.procurement-request-heading,
+.procurement-request-meta,
+.procurement-lines-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.procurement-search-row {
+  margin-bottom: 16px;
+}
+
+.procurement-search-row label {
+  flex: 1;
+}
+
+.procurement-lines {
+  display: grid;
+  gap: 12px;
+}
+
+.procurement-line {
+  display: grid;
+  grid-template-columns: minmax(150px, 2fr) repeat(3, minmax(120px, 1fr)) auto;
+  align-items: end;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #e3ebe8;
+  border-radius: 12px;
+  background: #fbfcfc;
+}
+
+.procurement-lines-heading h4 {
+  margin: 0;
+  color: var(--navy);
+}
+
+.quotation-entry {
+  border-top: 1px solid #e8efed;
+  padding-top: 10px;
+}
+
+.quotation-entry summary {
+  color: var(--navy);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.quotation-entry[open] {
+  display: grid;
+  gap: 12px;
+}
+
+.quotation-price-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(150px, 240px);
+  align-items: center;
+  gap: 12px;
+}
+
+.procurement-request-row {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid #e3ebe8;
+  border-radius: 14px;
+  background: #fff;
+}
+
+.procurement-request-heading > div {
+  display: grid;
+  gap: 4px;
+}
+
+.procurement-request-heading small,
+.procurement-approval-history small {
+  color: var(--muted);
+}
+
+.procurement-request-meta {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  font-size: 0.88rem;
+}
+
+.procurement-request-row p {
+  margin: 0;
+}
+
+.procurement-approval-history {
+  display: grid;
+  gap: 4px;
+  padding-top: 8px;
+  border-top: 1px solid #e8efed;
+}
+
+.procurement-rejection {
+  color: #a23838;
+}
+
+.inventory-admin-grid .primary-btn {
+  justify-self: start;
+}
+
+.modal-dialog {
+  width: min(540px, calc(100vw - 28px));
+  max-height: min(90vh, 760px);
+  overflow: auto;
+  padding: 22px;
+  border: 1px solid #e3ebe8;
+  border-radius: 18px;
+  color: var(--text);
+  background: #fff;
+  box-shadow: 0 24px 70px rgba(20, 42, 57, 0.22);
+}
+
+.modal-dialog::backdrop {
+  background: rgba(15, 31, 44, 0.5);
+  backdrop-filter: blur(3px);
+}
+
+[data-inventory-write][hidden],
+[data-custom-unit][hidden],
+[data-inventory-cost][hidden],
+[data-inventory-edit-item][hidden] {
+  display: none !important;
+}
+
 .transaction-quick-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   align-items: end;
@@ -1570,6 +1726,10 @@ select {
 }
 
 @media (max-width: 860px) {
+  .procurement-line {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .transaction-quick-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1629,6 +1789,15 @@ select {
 }
 
 @media (max-width: 520px) {
+  .procurement-line {
+    grid-template-columns: 1fr;
+  }
+
+  .procurement-search-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
   .transaction-quick-grid {
     grid-template-columns: 1fr;
   }

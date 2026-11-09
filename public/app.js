@@ -7,7 +7,9 @@ const state = {
   users: [],
   audit: [],
   documents: [],
-  bonus: []
+  bonus: [],
+  inventory: null,
+  procurement: null
 };
 
 const loginScreen = document.getElementById('loginScreen');
@@ -515,12 +517,360 @@ function renderBonusTable(rows) {
   target.innerHTML = tableRows || '<p>Belum ada data bonus.</p>';
 }
 
+function renderInventory(data) {
+  state.inventory = data;
+  const loadMessage = document.getElementById('inventoryLoadMessage');
+  loadMessage.hidden = true;
+  loadMessage.textContent = '';
+  document.getElementById('inventoryTotalItems').textContent = data.summary.totalItems;
+  document.getElementById('inventoryLowStock').textContent = data.summary.lowStockItems;
+  document.getElementById('inventoryOutOfStock').textContent = data.summary.outOfStockItems;
+  document.getElementById('inventoryTotalValue').textContent = formatCurrency(data.summary.totalInventoryValue);
+
+  const canWrite = ['DIREKTUR', 'MANAGER'].includes(state.user?.role);
+  const categories = data.categories.filter((category) => category.is_active);
+  const warehouses = data.warehouses.filter((warehouse) => warehouse.is_active);
+  const categorySelect = document.querySelector('#inventoryItemForm [name="category_id"]');
+  const defaultWarehouseSelect = document.querySelector('#inventoryItemForm [name="default_warehouse_id"]');
+  categorySelect.innerHTML = '<option value="">Pilih kategori</option>' + categories
+    .map((category) => `<option value="${Number(category.id)}">${escapeHtml(category.name)}</option>`)
+    .join('');
+  defaultWarehouseSelect.innerHTML = '<option value="">Tidak ditentukan</option>' + warehouses
+    .map((warehouse) => `<option value="${Number(warehouse.id)}">${escapeHtml(warehouse.name)}</option>`)
+    .join('');
+
+  const itemSelect = document.querySelector('#inventoryMovementForm [name="item_id"]');
+  const warehouseSelect = document.querySelector('#inventoryMovementForm [name="warehouse_id"]');
+  const previousItemId = itemSelect.value;
+  itemSelect.innerHTML = '<option value="">Pilih barang</option>' + data.items
+    .filter((item) => item.is_active)
+    .map((item) => `<option value="${Number(item.id)}">${escapeHtml(item.sku)} · ${escapeHtml(item.name)}</option>`)
+    .join('');
+  if (data.items.some((item) => String(item.id) === previousItemId && item.is_active)) {
+    itemSelect.value = previousItemId;
+  }
+  warehouseSelect.innerHTML = '<option value="">Pilih gudang</option>' + warehouses
+    .map((warehouse) => `<option value="${Number(warehouse.id)}">${escapeHtml(warehouse.name)}</option>`)
+    .join('');
+  syncInventoryMovementUnits();
+
+  const items = data.items.map((item) => `
+    <div class="table-row inventory-item-row">
+      <span><strong>${escapeHtml(item.sku)}</strong><small>${escapeHtml(item.name)}</small></span>
+      <span>${escapeHtml(item.category_name)}</span>
+      <span>${escapeHtml(item.total_stock)} ${escapeHtml(item.base_unit)}</span>
+      <span>Min. ${escapeHtml(item.min_stock)} ${escapeHtml(item.base_unit)}</span>
+      <span>${escapeHtml(item.default_warehouse_name || '-')}</span>
+      <span><span class="tag ${item.is_active ? (item.is_low_stock ? 'pending' : 'approved') : 'inactive'}">${item.is_active ? (item.is_low_stock ? 'Stok rendah' : 'Aktif') : 'Nonaktif'}</span></span>
+      ${canWrite ? `<span><button class="mini-btn" type="button" data-inventory-edit="item" data-id="${Number(item.id)}">Ubah</button></span>` : ''}
+    </div>
+  `).join('');
+  document.getElementById('inventoryItemsTable').innerHTML = items || '<p>Belum ada barang terdaftar.</p>';
+
+  const categoriesHtml = data.categories.map((category) => `
+    <div class="table-row inventory-admin-row">
+      <span><strong>${escapeHtml(category.name)}</strong><small>${escapeHtml(category.description || 'Tanpa deskripsi')}</small></span>
+      <span>${category.is_active ? 'Aktif' : 'Nonaktif'}</span>
+      ${canWrite ? `<span><button class="mini-btn" type="button" data-inventory-edit="category" data-id="${Number(category.id)}">Ubah</button></span>` : ''}
+    </div>
+  `).join('');
+  document.getElementById('inventoryCategoriesList').innerHTML = categoriesHtml || '<p>Belum ada kategori.</p>';
+
+  const warehousesHtml = data.warehouses.map((warehouse) => `
+    <div class="table-row inventory-admin-row">
+      <span><strong>${escapeHtml(warehouse.name)}</strong><small>${escapeHtml(warehouse.location || 'Lokasi belum diisi')}</small></span>
+      <span>${warehouse.is_active ? 'Aktif' : 'Nonaktif'}</span>
+      ${canWrite ? `<span><button class="mini-btn" type="button" data-inventory-edit="warehouse" data-id="${Number(warehouse.id)}">Ubah</button></span>` : ''}
+    </div>
+  `).join('');
+  document.getElementById('inventoryWarehousesList').innerHTML = warehousesHtml || '<p>Belum ada gudang.</p>';
+
+  const movementRows = data.movements.map((movement) => `
+    <div class="table-row inventory-movement-row">
+      <span><span class="tag ${movement.movement_type === 'IN' ? 'approved' : 'pending'}">${movement.movement_type === 'IN' ? 'Masuk' : 'Keluar'}</span></span>
+      <span><strong>${escapeHtml(movement.sku)}</strong><small>${escapeHtml(movement.item_name)}</small></span>
+      <span>${escapeHtml(movement.quantity)} ${escapeHtml(movement.unit)}</span>
+      <span>${escapeHtml(movement.warehouse_name)}</span>
+      <span>Sisa ${escapeHtml(movement.balance_after)} ${escapeHtml(data.items.find((item) => item.sku === movement.sku)?.base_unit || movement.unit)}</span>
+      <span>${escapeHtml(movement.reference || '-')}</span>
+      <span>${escapeHtml(movement.created_by_name)} · ${escapeHtml(new Date(movement.created_at).toLocaleString('id-ID'))}</span>
+    </div>
+  `).join('');
+  document.getElementById('inventoryMovementsTable').innerHTML = movementRows || '<p>Belum ada mutasi stok.</p>';
+
+  document.querySelectorAll('[data-inventory-write]').forEach((section) => {
+    section.hidden = !canWrite;
+  });
+}
+
+function syncInventoryMovementUnits() {
+  const itemId = document.querySelector('#inventoryMovementForm [name="item_id"]').value;
+  const item = state.inventory?.items.find((entry) => String(entry.id) === itemId);
+  const unitSelect = document.querySelector('#inventoryMovementForm [name="unit"]');
+  const units = item ? [item.base_unit, ...(item.alternate_unit ? [item.alternate_unit] : [])] : [];
+  unitSelect.innerHTML = units.map((unit) => `<option value="${escapeHtml(unit)}">${escapeHtml(unit)}</option>`).join('');
+}
+
+function syncCustomInventoryUnits() {
+  const form = document.getElementById('inventoryItemForm');
+  const baseIsCustom = form.elements.base_unit.value === 'LAINNYA';
+  const alternateIsCustom = form.elements.alternate_unit.value === 'LAINNYA';
+  const baseCustomField = form.querySelector('[data-custom-unit="base"]');
+  const alternateCustomField = form.querySelector('[data-custom-unit="alternate"]');
+  baseCustomField.hidden = !baseIsCustom;
+  alternateCustomField.hidden = !alternateIsCustom;
+  baseCustomField.querySelector('input').required = baseIsCustom;
+  alternateCustomField.querySelector('input').required = alternateIsCustom;
+}
+
+function formatRequestItems(items) {
+  return (items || []).map((item) =>
+    `${escapeHtml(item.item_name)} — ${escapeHtml(item.quantity)} ${escapeHtml(item.unit)} @ ${formatCurrency(item.estimated_unit_price)}`
+  ).join('<br>');
+}
+
+function renderProcurement(data) {
+  state.procurement = data;
+  const loadMessage = document.getElementById('procurementLoadMessage');
+  loadMessage.hidden = true;
+  loadMessage.textContent = '';
+  const canManage = ['DIREKTUR', 'MANAGER'].includes(state.user?.role);
+  const isDirector = state.user?.role === 'DIREKTUR';
+  document.getElementById('procurementSupplierCount').textContent =
+    data.suppliers.filter((supplier) => supplier.is_active).length;
+  const pendingRequests = data.requests.filter((request) =>
+    ['submitted', 'under_review'].includes(request.status)
+  );
+  document.getElementById('procurementPendingCount').textContent = pendingRequests.length;
+  document.getElementById('procurementPendingValue').textContent = formatCurrency(
+    pendingRequests.reduce((sum, request) => sum + Number(request.total_estimate || 0), 0)
+  );
+
+  const bankField = document.querySelector('[data-supplier-bank]');
+  bankField.hidden = !isDirector;
+  document.querySelectorAll('[data-procurement-write]').forEach((section) => {
+    section.hidden = state.user?.role === 'KOMISARIS';
+  });
+  document.querySelectorAll('[data-director-only]').forEach((section) => {
+    section.hidden = !isDirector;
+  });
+  if (isDirector) {
+    document.getElementById('procurementLimitForm').elements.manager_approval_limit.value =
+      data.managerApprovalLimit || '0';
+  }
+
+  const categories = [...new Set(data.suppliers.map((supplier) => supplier.category).filter(Boolean))]
+    .sort((left, right) => left.localeCompare(right));
+  const filter = document.getElementById('supplierCategoryFilter');
+  const oldFilter = filter.value;
+  filter.innerHTML = '<option value="">Semua kategori</option>' + categories
+    .map((category) => `<option value="${escapeHtml(category)}">${escapeHtml(category)}</option>`)
+    .join('');
+  if (categories.includes(oldFilter)) filter.value = oldFilter;
+  renderSupplierRows();
+  renderPurchaseRequestRows();
+}
+
+function renderSupplierRows() {
+  if (!state.procurement) return;
+  const query = document.getElementById('supplierSearch').value.trim().toLocaleLowerCase('id-ID');
+  const category = document.getElementById('supplierCategoryFilter').value;
+  const canManage = ['DIREKTUR', 'MANAGER'].includes(state.user?.role);
+  const rows = state.procurement.suppliers
+    .filter((supplier) => !category || supplier.category === category)
+    .filter((supplier) => !query || [
+      supplier.company_name, supplier.contact_name, supplier.category, supplier.city_province, supplier.email
+    ].some((value) => String(value || '').toLocaleLowerCase('id-ID').includes(query)))
+    .map((supplier) => {
+      const digits = String(supplier.whatsapp || '').replace(/\D/g, '');
+      const whatsappNumber = digits.startsWith('0') ? `62${digits.slice(1)}` : digits;
+      const whatsappLink = whatsappNumber
+        ? `<a href="https://wa.me/${whatsappNumber}" target="_blank" rel="noopener noreferrer">WhatsApp</a>`
+        : '-';
+      return `
+        <div class="table-row supplier-row">
+          <span><strong>${escapeHtml(supplier.supplier_code)}</strong><small>${escapeHtml(supplier.company_name)}</small></span>
+          <span>${escapeHtml(supplier.contact_name || '-')}<small>${escapeHtml(supplier.phone || '-')}</small></span>
+          <span>${escapeHtml(supplier.category || '-')}</span>
+          <span>${escapeHtml(supplier.city_province || '-')}<small>${escapeHtml(supplier.email || '-')}</small></span>
+          <span>${whatsappLink}</span>
+          <span>${escapeHtml(supplier.payment_terms || '-')}<small>${supplier.lead_time_days == null ? '-' : `${Number(supplier.lead_time_days)} hari`}</small></span>
+          ${state.user?.role === 'DIREKTUR' ? `<span>Rekening: ${escapeHtml(supplier.bank_details || '-')}</span>` : ''}
+          <span><span class="tag ${supplier.is_active ? 'approved' : 'inactive'}">${supplier.is_active ? 'Aktif' : 'Nonaktif'}</span></span>
+          ${canManage ? `<span><button class="mini-btn" type="button" data-edit-supplier="${Number(supplier.id)}">Ubah</button></span>` : ''}
+        </div>
+      `;
+    }).join('');
+  document.getElementById('suppliersTable').innerHTML = rows || '<p>Tidak ada supplier yang cocok.</p>';
+}
+
+function renderPurchaseRequestRows() {
+  if (!state.procurement) return;
+  const canApprove = ['DIREKTUR', 'MANAGER'].includes(state.user?.role);
+  const canManage = canApprove;
+  const currentUserId = String(state.user?.id || '');
+  const rows = state.procurement.requests.map((request) => {
+    const isPending = ['submitted', 'under_review'].includes(request.status);
+    const canReview = canApprove && isPending && String(request.requester_id) !== currentUserId;
+    const hasActiveOrder = state.procurement.purchaseOrders.some((order) =>
+      Number(order.request_id) === Number(request.id)
+      && ['pending_approval', 'issued'].includes(order.status)
+    );
+    const history = (request.approval_history || []).map((entry) => `
+      <small>${escapeHtml(entry.approver_name)} · ${escapeHtml(entry.decision)} · ${escapeHtml(new Date(entry.created_at).toLocaleString('id-ID'))}${entry.note ? ` — ${escapeHtml(entry.note)}` : ''}</small>
+    `).join('');
+    const actions = canReview ? `
+      <span class="inline-actions">
+        <button class="mini-btn" type="button" data-pr-decision="under_review" data-id="${Number(request.id)}">Tinjau</button>
+        <button class="mini-btn success" type="button" data-pr-decision="approved" data-id="${Number(request.id)}">Setujui</button>
+        <button class="mini-btn danger" type="button" data-pr-decision="rejected" data-id="${Number(request.id)}">Tolak</button>
+      </span>
+    ` : '';
+    const supplierOptions = state.procurement.suppliers
+      .filter((supplier) => supplier.is_active)
+      .map((supplier) => `<option value="${Number(supplier.id)}">${escapeHtml(supplier.supplier_code)} · ${escapeHtml(supplier.company_name)}</option>`)
+      .join('');
+    const quotationForm = canManage && request.status === 'approved' && !hasActiveOrder ? `
+      <details class="quotation-entry">
+        <summary>Catat penawaran supplier</summary>
+        <form class="transaction-form" data-quotation-form data-request-id="${Number(request.id)}">
+          <div class="form-grid">
+            <label><span>Supplier</span><select name="supplier_id" required><option value="">Pilih supplier</option>${supplierOptions}</select></label>
+            <label><span>Nomor penawaran</span><input name="supplier_quote_number" maxlength="100" /></label>
+            <label><span>Berlaku sampai</span><input name="valid_until" type="date" /></label>
+          </div>
+          <div class="procurement-lines">
+            ${(request.items || []).map((item) => `
+              <label class="quotation-price-line">
+                <span>${escapeHtml(item.item_name)} · ${escapeHtml(item.quantity)} ${escapeHtml(item.unit)}</span>
+                <input data-quote-price="${Number(item.id)}" type="number" min="0" step="0.01" value="0" required aria-label="Harga ${escapeHtml(item.item_name)}" />
+              </label>
+            `).join('')}
+          </div>
+          <label><span>Catatan penawaran</span><textarea name="notes" rows="2" maxlength="1000"></textarea></label>
+          <button class="mini-btn success" type="submit">Simpan Penawaran</button>
+        </form>
+      </details>
+    ` : '';
+    const statusLabel = {
+      submitted: 'Menunggu persetujuan',
+      under_review: 'Sedang ditinjau',
+      approved: 'Disetujui',
+      rejected: 'Ditolak',
+      converted_to_po: 'Menjadi PO',
+      cancelled: 'Dibatalkan',
+      draft: 'Draft'
+    }[request.status] || request.status;
+    return `
+      <article class="procurement-request-row">
+        <div class="procurement-request-heading">
+          <div><strong>${escapeHtml(request.request_number)}</strong><small>${escapeHtml(request.requester_name)} · ${escapeHtml(request.division || 'Tanpa divisi')} · ${new Date(request.created_at).toLocaleDateString('id-ID')}</small></div>
+          <span class="tag ${request.status === 'approved' ? 'approved' : request.status === 'rejected' ? 'inactive' : 'pending'}">${escapeHtml(statusLabel)}</span>
+        </div>
+        <div class="procurement-request-meta">
+          <span>Kategori: ${escapeHtml(request.category)}</span>
+          <span>Urgensi: ${escapeHtml(request.urgency)}</span>
+          <span>Perkiraan: <strong>${formatCurrency(request.total_estimate)}</strong></span>
+          <span>Dibutuhkan: ${request.needed_by ? new Date(`${request.needed_by}T00:00:00`).toLocaleDateString('id-ID') : '-'}</span>
+        </div>
+        <p>${formatRequestItems(request.items)}</p>
+        <p>${escapeHtml(request.reason)}</p>
+        ${request.project_name ? `<small>Proyek: ${escapeHtml(request.project_name)}</small>` : ''}
+        ${request.rejection_reason ? `<p class="procurement-rejection">Alasan penolakan: ${escapeHtml(request.rejection_reason)}</p>` : ''}
+        <div class="procurement-approval-history">${history || '<small>Belum ada riwayat persetujuan.</small>'}</div>
+        ${actions}
+        ${quotationForm}
+      </article>
+    `;
+  }).join('');
+  document.getElementById('purchaseRequestsTable').innerHTML = rows || '<p>Belum ada Purchase Request.</p>';
+  renderQuotationRows();
+  renderPurchaseOrderRows();
+}
+
+function renderQuotationRows() {
+  if (!state.procurement) return;
+  const canManage = ['DIREKTUR', 'MANAGER'].includes(state.user?.role);
+  const orders = state.procurement.purchaseOrders || [];
+  const rows = (state.procurement.quotations || []).map((quotation) => {
+    const request = state.procurement.requests.find((item) => Number(item.id) === Number(quotation.request_id));
+    const activeOrder = orders.some((order) =>
+      Number(order.request_id) === Number(quotation.request_id)
+      && ['pending_approval', 'issued'].includes(order.status)
+    );
+    const expired = quotation.valid_until
+      && new Date(`${String(quotation.valid_until).slice(0, 10)}T00:00:00`) < new Date(new Date().toDateString());
+    const canCreateOrder = canManage && request?.status === 'approved'
+      && quotation.status === 'available' && !expired && !activeOrder;
+    const statusLabel = quotation.status === 'selected'
+      ? 'Dipilih untuk PO'
+      : quotation.status === 'not_selected' ? 'Belum dipilih' : expired ? 'Kedaluwarsa' : 'Tersedia';
+    return `
+      <article class="procurement-request-row">
+        <div class="procurement-request-heading">
+          <div><strong>${escapeHtml(quotation.request_number)} · ${escapeHtml(quotation.supplier_code)}</strong><small>${escapeHtml(quotation.company_name)}${quotation.supplier_quote_number ? ` · Ref: ${escapeHtml(quotation.supplier_quote_number)}` : ''}</small></div>
+          <span class="tag ${quotation.status === 'selected' ? 'approved' : expired ? 'inactive' : 'pending'}">${statusLabel}</span>
+        </div>
+        <div class="procurement-request-meta">
+          <span>Total penawaran: <strong>${formatCurrency(quotation.total)}</strong></span>
+          <span>Berlaku sampai: ${quotation.valid_until ? new Date(`${String(quotation.valid_until).slice(0, 10)}T00:00:00`).toLocaleDateString('id-ID') : 'Tidak ditentukan'}</span>
+        </div>
+        <p>${formatRequestItems((quotation.items || []).map((item) => ({
+          ...item,
+          estimated_unit_price: item.unit_price
+        })))}</p>
+        ${quotation.notes ? `<p>${escapeHtml(quotation.notes)}</p>` : ''}
+        ${canCreateOrder ? `<button class="mini-btn success" type="button" data-create-po data-request-id="${Number(quotation.request_id)}" data-quotation-id="${Number(quotation.id)}">Buat PO dari Penawaran</button>` : ''}
+      </article>
+    `;
+  }).join('');
+  document.getElementById('supplierQuotationsTable').innerHTML = rows || '<p>Belum ada penawaran supplier untuk PR yang disetujui.</p>';
+}
+
+function renderPurchaseOrderRows() {
+  if (!state.procurement) return;
+  const isDirector = state.user?.role === 'DIREKTUR';
+  const currentUserId = String(state.user?.id || '');
+  const rows = (state.procurement.purchaseOrders || []).map((order) => {
+    const canDecide = isDirector && order.status === 'pending_approval'
+      && String(order.created_by) !== currentUserId;
+    const history = (order.approval_history || []).map((entry) => `
+      <small>${escapeHtml(entry.approver_name)} · ${escapeHtml(entry.decision)} · ${escapeHtml(new Date(entry.created_at).toLocaleString('id-ID'))}${entry.note ? ` — ${escapeHtml(entry.note)}` : ''}</small>
+    `).join('');
+    const statusLabel = {
+      pending_approval: 'Menunggu persetujuan Direktur',
+      issued: 'Terbit',
+      rejected: 'Ditolak',
+      cancelled: 'Dibatalkan'
+    }[order.status] || order.status;
+    return `
+      <article class="procurement-request-row">
+        <div class="procurement-request-heading">
+          <div><strong>${escapeHtml(order.po_number)} · ${escapeHtml(order.request_number)}</strong><small>${escapeHtml(order.supplier_code)} · ${escapeHtml(order.company_name)} · Dibuat ${escapeHtml(order.creator_name)}</small></div>
+          <span class="tag ${order.status === 'issued' ? 'approved' : order.status === 'rejected' ? 'inactive' : 'pending'}">${statusLabel}</span>
+        </div>
+        <div class="procurement-request-meta"><span>Total PO: <strong>${formatCurrency(order.total)}</strong></span><span>${order.issued_at ? `Terbit ${new Date(order.issued_at).toLocaleString('id-ID')}` : 'Belum diterbitkan'}</span></div>
+        <p>${formatRequestItems((order.items || []).map((item) => ({ ...item, estimated_unit_price: item.unit_price })))}</p>
+        ${order.rejection_reason ? `<p class="procurement-rejection">Alasan penolakan: ${escapeHtml(order.rejection_reason)}</p>` : ''}
+        <div class="procurement-approval-history">${history || '<small>Belum ada riwayat persetujuan.</small>'}</div>
+        ${canDecide ? `
+          <span class="inline-actions">
+            <button class="mini-btn success" type="button" data-po-decision="approved" data-id="${Number(order.id)}">Setujui & Terbitkan</button>
+            <button class="mini-btn danger" type="button" data-po-decision="rejected" data-id="${Number(order.id)}">Tolak PO</button>
+          </span>
+        ` : ''}
+      </article>
+    `;
+  }).join('');
+  document.getElementById('purchaseOrdersTable').innerHTML = rows || '<p>Belum ada Purchase Order.</p>';
+}
+
 function getAllowedViews(role) {
   const map = {
-    DIREKTUR: ['dashboard', 'finance', 'documents', 'bonus', 'tasks', 'users', 'audit'],
-    MANAGER: ['dashboard', 'bonus', 'tasks'],
-    KOMISARIS: ['dashboard', 'bonus', 'tasks'],
-    KARYAWAN: ['dashboard', 'bonus', 'tasks']
+    DIREKTUR: ['dashboard', 'finance', 'inventory', 'procurement', 'documents', 'bonus', 'tasks', 'users', 'audit'],
+    MANAGER: ['dashboard', 'inventory', 'procurement', 'bonus', 'tasks'],
+    KOMISARIS: ['dashboard', 'inventory', 'procurement', 'bonus', 'tasks'],
+    KARYAWAN: ['dashboard', 'procurement', 'bonus', 'tasks']
   };
 
   return map[role] || ['dashboard'];
@@ -542,6 +892,15 @@ function applyRolePermissions() {
   const transactionForm = document.getElementById('transactionForm');
   const documentForm = document.getElementById('documentForm');
 
+  document.querySelectorAll('[data-inventory-write]').forEach((section) => {
+    section.hidden = !['DIREKTUR', 'MANAGER'].includes(role);
+  });
+  document.querySelectorAll('[data-procurement-write]').forEach((section) => {
+    section.hidden = role === 'KOMISARIS';
+  });
+  document.querySelectorAll('[data-director-only]').forEach((section) => {
+    section.hidden = !isDirector;
+  });
   document.getElementById('directorQuickActions').classList.toggle('hidden', !isDirector);
   document.getElementById('companyDashboardContent').classList.toggle('hidden', !isDirector);
   document.getElementById('employeeDashboardNote').classList.toggle('hidden', isDirector);
@@ -586,6 +945,8 @@ function setCurrentView(view) {
   pageTitle.textContent = {
     dashboard: 'Dashboard',
     finance: 'Keuangan',
+    inventory: 'Inventory',
+    procurement: 'Pengadaan',
     documents: 'Dokumen',
     bonus: 'Bonus',
     tasks: 'Pekerjaan',
@@ -671,6 +1032,30 @@ async function loadFinance() {
   renderFinanceTable(transactions);
 }
 
+async function loadInventory() {
+  try {
+    const inventory = await apiFetch('/api/inventory');
+    renderInventory(inventory);
+  } catch (error) {
+    const message = document.getElementById('inventoryLoadMessage');
+    message.hidden = false;
+    message.textContent = `Gagal memuat data inventory: ${error.message}`;
+    throw error;
+  }
+}
+
+async function loadProcurement() {
+  try {
+    const data = await apiFetch('/api/procurement');
+    renderProcurement(data);
+  } catch (error) {
+    const message = document.getElementById('procurementLoadMessage');
+    message.hidden = false;
+    message.textContent = `Gagal memuat data pengadaan: ${error.message}`;
+    throw error;
+  }
+}
+
 async function loadDocuments() {
   const documents = await apiFetch('/api/documents');
   state.documents = documents;
@@ -687,9 +1072,12 @@ async function refreshData() {
   try {
     await loadDashboard();
     if (state.user.role === 'DIREKTUR') {
-        await Promise.all([loadFinance(), loadDocuments(), loadBonus(), loadUsers(), loadAudit(), loadTasks()]);
+        await Promise.all([loadFinance(), loadInventory(), loadProcurement(), loadDocuments(), loadBonus(), loadUsers(), loadAudit(), loadTasks()]);
       } else {
-        await Promise.all([loadBonus(), loadTasks()]);
+        const tasks = [loadBonus(), loadTasks()];
+        if (getAllowedViews(state.user.role).includes('inventory')) tasks.push(loadInventory());
+        if (getAllowedViews(state.user.role).includes('procurement')) tasks.push(loadProcurement());
+        await Promise.all(tasks);
       }
   } catch (error) {
     console.error(error);
@@ -954,6 +1342,31 @@ document.addEventListener('submit', async (event) => {
   }
 });
 
+document.addEventListener('submit', async (event) => {
+  const quotationForm = event.target.closest('[data-quotation-form]');
+  if (!quotationForm) return;
+  event.preventDefault();
+  const button = quotationForm.querySelector('button[type="submit"]');
+  button.disabled = true;
+  const values = Object.fromEntries(new FormData(quotationForm).entries());
+  values.items = [...quotationForm.querySelectorAll('[data-quote-price]')].map((input) => ({
+    request_item_id: Number(input.dataset.quotePrice),
+    unit_price: input.value
+  }));
+  try {
+    await apiFetch(`/api/procurement/requests/${Number(quotationForm.dataset.requestId)}/quotations`, {
+      method: 'POST',
+      body: JSON.stringify(values)
+    });
+    await refreshData();
+    alert('Penawaran supplier berhasil dicatat.');
+  } catch (error) {
+    alert(error.message);
+  } finally {
+    button.disabled = false;
+  }
+});
+
 const transactionForm = document.getElementById('transactionForm');
 const transactionDateInput = transactionForm.elements.date;
 const setTransactionDateToday = () => {
@@ -986,6 +1399,400 @@ transactionForm.addEventListener('submit', async (event) => {
     alert(error.message);
   } finally {
     submitButton.disabled = false;
+  }
+});
+
+const supplierForm = document.getElementById('supplierForm');
+const purchaseRequestForm = document.getElementById('purchaseRequestForm');
+const procurementLimitForm = document.getElementById('procurementLimitForm');
+const purchaseRequestItems = document.getElementById('purchaseRequestItems');
+
+document.getElementById('supplierSearch').addEventListener('input', renderSupplierRows);
+document.getElementById('supplierCategoryFilter').addEventListener('change', renderSupplierRows);
+document.getElementById('cancelSupplierEdit').addEventListener('click', () => {
+  supplierForm.reset();
+  supplierForm.elements.supplier_id.value = '';
+  supplierForm.querySelector('button[type="submit"]').textContent = 'Simpan Supplier';
+  document.getElementById('cancelSupplierEdit').hidden = true;
+});
+
+supplierForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    const values = Object.fromEntries(new FormData(form).entries());
+    const supplierId = values.supplier_id;
+    delete values.supplier_id;
+    if (supplierId) values.is_active = values.is_active === 'true';
+    else delete values.is_active;
+    await apiFetch(
+      supplierId ? `/api/procurement/suppliers/${Number(supplierId)}` : '/api/procurement/suppliers',
+      { method: supplierId ? 'PATCH' : 'POST', body: JSON.stringify(values) }
+    );
+    form.reset();
+    form.elements.supplier_id.value = '';
+    button.textContent = 'Simpan Supplier';
+    document.getElementById('cancelSupplierEdit').hidden = true;
+    await refreshData();
+    alert(supplierId ? 'Data supplier diperbarui.' : 'Supplier berhasil ditambahkan.');
+  } catch (error) {
+    alert(error.message);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+document.getElementById('addPurchaseRequestItem').addEventListener('click', () => {
+  if (purchaseRequestItems.children.length >= 30) {
+    alert('Satu PR maksimal berisi 30 barang.');
+    return;
+  }
+  const row = purchaseRequestItems.querySelector('[data-request-line]').cloneNode(true);
+  row.querySelectorAll('input').forEach((input) => {
+    input.value = '';
+  });
+  row.querySelector('[data-remove-request-line]').hidden = false;
+  purchaseRequestItems.append(row);
+});
+
+purchaseRequestItems.addEventListener('click', (event) => {
+  const removeButton = event.target.closest('[data-remove-request-line]');
+  if (!removeButton || purchaseRequestItems.children.length <= 1) return;
+  removeButton.closest('[data-request-line]').remove();
+});
+
+purchaseRequestForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('button[type="submit"]');
+  button.disabled = true;
+  const values = Object.fromEntries(new FormData(form).entries());
+  values.items = [...purchaseRequestItems.querySelectorAll('[data-request-line]')].map((row) => ({
+    item_name: row.querySelector('[data-line-name]').value,
+    quantity: row.querySelector('[data-line-quantity]').value,
+    unit: row.querySelector('[data-line-unit]').value,
+    estimated_unit_price: row.querySelector('[data-line-price]').value
+  }));
+  try {
+    const result = await apiFetch('/api/procurement/requests', {
+      method: 'POST',
+      body: JSON.stringify(values)
+    });
+    form.reset();
+    purchaseRequestItems.innerHTML = `
+      <div class="procurement-line" data-request-line>
+        <label><span>Nama barang</span><input data-line-name maxlength="160" required /></label>
+        <label><span>Jumlah</span><input data-line-quantity type="number" min="0.000001" step="0.000001" required /></label>
+        <label><span>Satuan</span><input data-line-unit maxlength="20" placeholder="Kg / unit..." required /></label>
+        <label><span>Harga estimasi per satuan</span><input data-line-price type="number" min="0" step="0.01" value="0" required /></label>
+        <button class="mini-btn danger" type="button" data-remove-request-line hidden>Hapus</button>
+      </div>
+    `;
+    await refreshData();
+    alert(`PR ${result.request_number} berhasil diajukan.`);
+  } catch (error) {
+    alert(error.message);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+procurementLimitForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    const values = Object.fromEntries(new FormData(form).entries());
+    await apiFetch('/api/procurement/settings/manager-approval-limit', {
+      method: 'PUT',
+      body: JSON.stringify(values)
+    });
+    await refreshData();
+    alert('Batas persetujuan Manager berhasil diperbarui.');
+  } catch (error) {
+    alert(error.message);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+document.addEventListener('click', async (event) => {
+  const editSupplierButton = event.target.closest('[data-edit-supplier]');
+  if (editSupplierButton) {
+    const supplier = state.procurement?.suppliers.find(
+      (entry) => Number(entry.id) === Number(editSupplierButton.dataset.editSupplier)
+    );
+    if (!supplier) return;
+    for (const [key, value] of Object.entries(supplier)) {
+      if (supplierForm.elements[key]) supplierForm.elements[key].value = value ?? '';
+    }
+    supplierForm.elements.supplier_id.value = String(supplier.id);
+    supplierForm.querySelector('button[type="submit"]').textContent = 'Perbarui Supplier';
+    document.getElementById('cancelSupplierEdit').hidden = false;
+    supplierForm.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return;
+  }
+
+  const createOrderButton = event.target.closest('[data-create-po]');
+  if (createOrderButton) {
+    if (!window.confirm('Buat Purchase Order dari penawaran ini? Jika dibuat Manager, PO akan menunggu persetujuan Direktur.')) return;
+    createOrderButton.disabled = true;
+    try {
+      const result = await apiFetch(
+        `/api/procurement/requests/${Number(createOrderButton.dataset.requestId)}/purchase-orders`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ quotation_id: Number(createOrderButton.dataset.quotationId) })
+        }
+      );
+      await refreshData();
+      alert(result.status === 'issued' ? `PO ${result.po_number} berhasil diterbitkan.` : `PO ${result.po_number} menunggu persetujuan Direktur.`);
+    } catch (error) {
+      alert(error.message);
+    } finally {
+      createOrderButton.disabled = false;
+    }
+    return;
+  }
+
+  const orderDecisionButton = event.target.closest('[data-po-decision]');
+  if (orderDecisionButton) {
+    const decision = orderDecisionButton.dataset.poDecision;
+    const note = decision === 'rejected'
+      ? window.prompt('Tuliskan alasan penolakan PO:')
+      : '';
+    if (note === null || (decision === 'rejected' && note.trim().length < 3)) {
+      if (decision === 'rejected' && note !== null) alert('Alasan penolakan minimal 3 karakter.');
+      return;
+    }
+    orderDecisionButton.disabled = true;
+    try {
+      await apiFetch(`/api/procurement/purchase-orders/${Number(orderDecisionButton.dataset.id)}/decision`, {
+        method: 'POST',
+        body: JSON.stringify({ decision, note: note.trim() })
+      });
+      await refreshData();
+      alert(decision === 'approved' ? 'PO disetujui dan diterbitkan.' : 'PO ditolak. Penawaran dapat dipilih ulang.');
+    } catch (error) {
+      alert(error.message);
+    } finally {
+      orderDecisionButton.disabled = false;
+    }
+    return;
+  }
+
+  const decisionButton = event.target.closest('[data-pr-decision]');
+  if (!decisionButton) return;
+  const decision = decisionButton.dataset.prDecision;
+  const promptText = decision === 'rejected'
+    ? 'Tuliskan alasan penolakan PR:'
+    : decision === 'under_review'
+      ? 'Catatan untuk memulai peninjauan (opsional):'
+      : 'Catatan persetujuan (opsional):';
+  const note = window.prompt(promptText);
+  if (note === null || (decision === 'rejected' && note.trim().length < 3)) {
+    if (decision === 'rejected' && note !== null) alert('Alasan penolakan minimal 3 karakter.');
+    return;
+  }
+  decisionButton.disabled = true;
+  try {
+    await apiFetch(`/api/procurement/requests/${Number(decisionButton.dataset.id)}/decision`, {
+      method: 'POST',
+      body: JSON.stringify({ decision, note: note.trim() })
+    });
+    await refreshData();
+    alert(decision === 'approved' ? 'PR berhasil disetujui.' : decision === 'rejected' ? 'PR ditolak.' : 'PR masuk ke tahap peninjauan.');
+  } catch (error) {
+    alert(error.message);
+  } finally {
+    decisionButton.disabled = false;
+  }
+});
+
+const inventoryItemForm = document.getElementById('inventoryItemForm');
+const inventoryCategoryForm = document.getElementById('inventoryCategoryForm');
+const inventoryWarehouseForm = document.getElementById('inventoryWarehouseForm');
+const inventoryMovementForm = document.getElementById('inventoryMovementForm');
+const inventoryEditDialog = document.getElementById('inventoryEditDialog');
+const inventoryEditForm = document.getElementById('inventoryEditForm');
+const inventoryMovementType = inventoryMovementForm.elements.movement_type;
+
+inventoryMovementForm.elements.idempotency_key.value = crypto.randomUUID();
+document.querySelector('#inventoryMovementForm [name="item_id"]').addEventListener('change', () => {
+  syncInventoryMovementUnits();
+  const selectedItem = state.inventory?.items.find(
+    (item) => String(item.id) === inventoryMovementForm.elements.item_id.value
+  );
+  if (selectedItem?.default_warehouse_id) {
+    inventoryMovementForm.elements.warehouse_id.value = String(selectedItem.default_warehouse_id);
+  }
+});
+inventoryMovementType.addEventListener('change', () => {
+  document.querySelector('[data-inventory-cost]').hidden = inventoryMovementType.value !== 'IN';
+});
+inventoryItemForm.elements.base_unit.addEventListener('change', syncCustomInventoryUnits);
+inventoryItemForm.elements.alternate_unit.addEventListener('change', syncCustomInventoryUnits);
+
+inventoryItemForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    const values = Object.fromEntries(new FormData(form).entries());
+    if (values.base_unit === 'LAINNYA') values.base_unit = values.base_unit_other;
+    if (values.alternate_unit === 'LAINNYA') values.alternate_unit = values.alternate_unit_other;
+    delete values.base_unit_other;
+    delete values.alternate_unit_other;
+    await apiFetch('/api/inventory/items', { method: 'POST', body: JSON.stringify(values) });
+    form.reset();
+    syncCustomInventoryUnits();
+    await refreshData();
+    alert('Barang berhasil ditambahkan.');
+  } catch (error) {
+    alert(error.message);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+inventoryCategoryForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    const values = Object.fromEntries(new FormData(form).entries());
+    await apiFetch('/api/inventory/categories', { method: 'POST', body: JSON.stringify(values) });
+    form.reset();
+    await refreshData();
+  } catch (error) {
+    alert(error.message);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+inventoryWarehouseForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    const values = Object.fromEntries(new FormData(form).entries());
+    await apiFetch('/api/inventory/warehouses', { method: 'POST', body: JSON.stringify(values) });
+    form.reset();
+    await refreshData();
+  } catch (error) {
+    alert(error.message);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+inventoryMovementForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    const values = Object.fromEntries(new FormData(form).entries());
+    if (values.movement_type === 'OUT') values.unit_cost = '0';
+    await apiFetch('/api/inventory/movements', { method: 'POST', body: JSON.stringify(values) });
+    form.reset();
+    form.elements.idempotency_key.value = crypto.randomUUID();
+    document.querySelector('[data-inventory-cost]').hidden = false;
+    await refreshData();
+    alert('Mutasi stok berhasil dicatat.');
+  } catch (error) {
+    alert(error.message);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+document.addEventListener('click', (event) => {
+  if (event.target.closest('[data-close-inventory-edit]')) {
+    inventoryEditDialog.close();
+    return;
+  }
+  const button = event.target.closest('[data-inventory-edit]');
+  if (!button) return;
+  const type = button.dataset.inventoryEdit;
+  const id = Number(button.dataset.id);
+  const record = type === 'item'
+    ? state.inventory?.items.find((item) => Number(item.id) === id)
+    : type === 'category'
+      ? state.inventory?.categories.find((category) => Number(category.id) === id)
+      : state.inventory?.warehouses.find((warehouse) => Number(warehouse.id) === id);
+  if (!record) return;
+
+  inventoryEditForm.reset();
+  inventoryEditForm.elements.object_type.value = type;
+  inventoryEditForm.elements.object_id.value = String(id);
+  inventoryEditForm.elements.name.value = record.name;
+  inventoryEditForm.elements.is_active.value = String(record.is_active);
+  document.getElementById('inventoryEditTitle').textContent = `Ubah ${type === 'item' ? 'Barang' : type === 'category' ? 'Kategori' : 'Gudang'}`;
+  document.getElementById('inventoryEditNameLabel').textContent = type === 'item' ? 'Nama barang' : type === 'category' ? 'Nama kategori' : 'Nama gudang';
+  document.getElementById('inventoryEditDetailsLabel').textContent = type === 'warehouse' ? 'Lokasi' : 'Deskripsi';
+  document.querySelector('[data-inventory-edit-details]').hidden = false;
+  inventoryEditForm.elements.details.value = type === 'warehouse' ? record.location : record.description;
+  const itemFields = document.querySelector('[data-inventory-edit-item]');
+  itemFields.hidden = type !== 'item';
+  if (type === 'item') {
+    const categorySelect = inventoryEditForm.elements.category_id;
+    const warehouseSelect = inventoryEditForm.elements.default_warehouse_id;
+    categorySelect.innerHTML = state.inventory.categories
+      .map((category) => `<option value="${Number(category.id)}" ${String(category.id) === String(record.category_id) ? 'selected' : ''}>${escapeHtml(category.name)}${category.is_active ? '' : ' (nonaktif)'}</option>`)
+      .join('');
+    warehouseSelect.innerHTML = '<option value="">Tidak ditentukan</option>' + state.inventory.warehouses
+      .map((warehouse) => `<option value="${Number(warehouse.id)}" ${String(warehouse.id) === String(record.default_warehouse_id) ? 'selected' : ''}>${escapeHtml(warehouse.name)}${warehouse.is_active ? '' : ' (nonaktif)'}</option>`)
+      .join('');
+    categorySelect.value = String(record.category_id);
+    warehouseSelect.value = record.default_warehouse_id ? String(record.default_warehouse_id) : '';
+    inventoryEditForm.elements.min_stock.value = record.min_stock;
+    inventoryEditForm.elements.max_stock.value = record.max_stock ?? '';
+    inventoryEditForm.elements.reference_price.value = record.reference_price;
+  }
+  inventoryEditDialog.showModal();
+});
+
+inventoryEditForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const button = inventoryEditForm.querySelector('button[type="submit"]');
+  button.disabled = true;
+  const values = Object.fromEntries(new FormData(inventoryEditForm).entries());
+  const type = values.object_type;
+  const id = Number(values.object_id);
+  const payload = {
+    name: values.name,
+    is_active: values.is_active === 'true'
+  };
+  if (type === 'category') payload.description = values.details;
+  if (type === 'warehouse') payload.location = values.details;
+  if (type === 'item') {
+    payload.description = values.details;
+    payload.category_id = values.category_id;
+    payload.default_warehouse_id = values.default_warehouse_id;
+    payload.min_stock = values.min_stock;
+    payload.max_stock = values.max_stock;
+    payload.reference_price = values.reference_price;
+  }
+  try {
+    const collection = type === 'item' ? 'items' : type === 'category' ? 'categories' : 'warehouses';
+    await apiFetch(`/api/inventory/${collection}/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload)
+    });
+    inventoryEditDialog.close();
+    await refreshData();
+  } catch (error) {
+    alert(error.message);
+  } finally {
+    button.disabled = false;
   }
 });
 

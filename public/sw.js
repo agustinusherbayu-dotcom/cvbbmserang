@@ -1,4 +1,4 @@
-const CACHE_NAME = 'bbm-static-v2';
+const CACHE_NAME = 'bbm-static-v3';
 const ASSETS = ['/', '/index.html', '/styles.css', '/app.js', '/manifest.webmanifest'];
 
 self.addEventListener('install', (event) => {
@@ -18,9 +18,19 @@ self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET' || requestUrl.origin !== self.location.origin || requestUrl.pathname.startsWith('/api/')) return;
 
   event.respondWith(
-    caches.match(event.request).then((cached) => {
-      if (cached) return cached;
-      return fetch(event.request);
-    })
+    fetch(event.request)
+      .then((response) => {
+        if (response.ok) {
+          return caches.open(CACHE_NAME)
+            .then((cache) => cache.put(event.request, response.clone()))
+            .then(() => response);
+        }
+        return response;
+      })
+      .catch(async () => {
+        const cached = await caches.match(event.request);
+        if (cached) return cached;
+        return Response.error();
+      })
   );
 });

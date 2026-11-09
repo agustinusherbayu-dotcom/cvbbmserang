@@ -75,14 +75,25 @@ function formatCurrency(value) {
 
 function renderSummaryCards(data) {
   const summaryGrid = document.getElementById('summaryGrid');
-  const cards = [
-    { label: 'Total Saldo', value: data?.summary?.balance ?? 0, format: 'currency' },
-    { label: 'Total Pemasukan', value: data?.summary?.income ?? 0, format: 'currency' },
-    { label: 'Total Pengeluaran', value: data?.summary?.expense ?? 0, format: 'currency' },
-    { label: 'Total Transaksi', value: data?.summary?.totalTransactions ?? 0, format: 'number' },
-    { label: 'Pekerjaan Menunggu Verifikasi', value: data?.summary?.pendingVerification ?? 0, format: 'number' },
-    { label: 'Total Bonus Karyawan', value: data?.summary?.totalBonus ?? 0, format: 'currency' }
-  ];
+  const isDirector = state.user?.role === 'DIREKTUR';
+  document.getElementById('companyDashboardContent').classList.toggle('hidden', !isDirector);
+  document.getElementById('employeeDashboardNote').classList.toggle('hidden', isDirector);
+  document.getElementById('directorQuickActions').classList.toggle('hidden', !isDirector);
+  const cards = isDirector
+    ? [
+        { label: 'Total Saldo', value: data?.summary?.balance ?? 0, format: 'currency' },
+        { label: 'Total Pemasukan', value: data?.summary?.income ?? 0, format: 'currency' },
+        { label: 'Total Pengeluaran', value: data?.summary?.expense ?? 0, format: 'currency' },
+        { label: 'Total Transaksi', value: data?.summary?.totalTransactions ?? 0, format: 'number' },
+        { label: 'Pekerjaan Menunggu Verifikasi', value: data?.summary?.pendingVerification ?? 0, format: 'number' },
+        { label: 'Total Bonus Karyawan', value: data?.summary?.totalBonus ?? 0, format: 'currency' }
+      ]
+    : [
+        { label: 'Tugas ditugaskan', value: data?.summary?.assignedTasks ?? 0, format: 'number' },
+        { label: 'Dalam pengerjaan', value: data?.summary?.inProgressTasks ?? 0, format: 'number' },
+        { label: 'Menunggu pemeriksaan', value: data?.summary?.waitingTasks ?? 0, format: 'number' },
+        { label: 'Selesai disetujui', value: data?.summary?.approvedTasks ?? 0, format: 'number' }
+      ];
 
   summaryGrid.innerHTML = cards.map(card => {
     const value = card.format === 'currency' ? formatCurrency(card.value) : card.value;
@@ -166,29 +177,83 @@ function renderFinanceTable(transactions) {
 function renderTaskTable(tasks) {
   const target = document.getElementById('taskTable');
   const canVerify = state.user?.role === 'DIREKTUR';
+  const isEmployee = state.user?.role === 'KARYAWAN';
+  document.getElementById('taskListHeading').textContent = canVerify ? 'Semua pekerjaan' : 'Pekerjaan saya';
 
   const rows = (tasks || []).map(task => {
-    const taskActions = canVerify && !['approved', 'rejected'].includes(task.status)
-      ? `
-        <div class="inline-actions">
-          <button class="mini-btn success" data-task-action="approved" data-task-id="${task.id}" data-task-bonus="${Number(task.bonus_amount || 0)}">Approve</button>
-          <button class="mini-btn danger" data-task-action="rejected" data-task-id="${task.id}">Tolak</button>
-        </div>
-      `
-      : '<span class="tag ' + (task.status || 'pending') + '">' + (task.status || 'pending') + '</span>';
+    const progress = Math.max(0, Math.min(100, Number(task.progress_percent) || 0));
+    const statusLabels = {
+      pending: 'Belum selesai',
+      in_review: 'Menunggu pemeriksaan',
+      approved: 'Disetujui',
+      rejected: 'Perlu diperbaiki'
+    };
+    const status = ['pending', 'in_review', 'approved', 'rejected'].includes(task.status) ? task.status : 'pending';
+    const verificationActions = canVerify && status === 'in_review'
+      ? `<div class="inline-actions task-verification-actions">
+          <button class="mini-btn success" data-task-action="approved" data-task-id="${Number(task.id)}" data-task-bonus="${Number(task.bonus_amount || 0)}">Setujui hasil</button>
+          <button class="mini-btn danger" data-task-action="rejected" data-task-id="${Number(task.id)}">Minta perbaikan</button>
+        </div>`
+      : '';
+    const progressForm = !canVerify && !['approved', 'in_review'].includes(status)
+      ? `<form class="task-progress-form" data-progress-form data-task-id="${Number(task.id)}">
+          <label>
+            <span>Progres saat ini (%)</span>
+            <input type="number" name="progress_percent" min="0" max="100" step="1" value="${progress}" required />
+          </label>
+          <label>
+            <span>Uraian progres</span>
+            <textarea name="progress_note" rows="2" maxlength="2000" placeholder="Apa yang sudah dikerjakan?" required>${escapeHtml(task.progress_note || '')}</textarea>
+          </label>
+          <label>
+            <span>Hasil sementara / akhir</span>
+            <textarea name="result" rows="2" maxlength="3000" placeholder="Catat hasil pekerjaan yang sudah diperoleh">${escapeHtml(task.result || '')}</textarea>
+          </label>
+          <button class="primary-btn small" type="submit">Simpan progres</button>
+        </form>`
+      : '';
+    const reviewNote = !canVerify && status === 'in_review'
+      ? '<p class="task-waiting-review">Hasil sudah dikirim untuk diperiksa. Anda dapat memperbarui pekerjaan setelah mendapat keputusan Direktur.</p>'
+      : '';
 
     return `
-      <div class="task-row">
-        <span>${escapeHtml(task.title)}</span>
-        <span>${task.quantity}</span>
-        <span>${escapeHtml(task.assignee_name || 'Unknown')}</span>
-        <span>${formatCurrency(task.bonus_amount ?? 0)}</span>
-        <span>${taskActions}</span>
-      </div>
+      <article class="task-card">
+        <div class="task-card-heading">
+          <div>
+            <h4>${escapeHtml(task.title)}</h4>
+            ${canVerify ? `<p class="task-assignee">Ditugaskan kepada ${escapeHtml(task.assignee_name || '-')}</p>` : ''}
+          </div>
+          <span class="tag ${status}">${statusLabels[status]}</span>
+        </div>
+        ${task.description ? `<p class="task-description">${escapeHtml(task.description)}</p>` : ''}
+        <div class="task-progress-heading">
+          <span>Progres</span>
+          <strong>${progress}%</strong>
+        </div>
+        <div class="task-progress-track" role="progressbar" aria-valuenow="${progress}" aria-valuemin="0" aria-valuemax="100">
+          <span style="width:${progress}%"></span>
+        </div>
+        <div class="task-details">
+          <span>Target: <strong>${escapeHtml(task.quantity)}</strong></span>
+          ${task.progress_note ? `<span>Update: ${escapeHtml(task.progress_note)}</span>` : '<span>Belum ada catatan progres.</span>'}
+          ${task.result ? `<span>Hasil: ${escapeHtml(task.result)}</span>` : ''}
+          ${canVerify ? `<span>Bonus tugas: <strong>${formatCurrency(task.bonus_amount ?? 0)}</strong></span>` : ''}
+        </div>
+        <details class="task-history">
+          <summary data-task-history="${Number(task.id)}">Lihat riwayat progres</summary>
+          <div class="task-history-list" data-task-updates="${Number(task.id)}"><span class="field-help">Buka untuk memuat riwayat.</span></div>
+        </details>
+        ${progressForm}
+        ${reviewNote}
+        ${verificationActions}
+      </article>
     `;
   }).join('');
 
-  target.innerHTML = rows || '<p>Belum ada pekerjaan.</p>';
+  target.innerHTML = rows || `<div class="task-empty">
+    <strong>${isEmployee ? 'Belum ada tugas untuk Anda.' : 'Belum ada pekerjaan.'}</strong>
+    <p>${isEmployee ? 'Tugas baru yang diberikan kepada Anda akan muncul di sini.' : 'Pekerjaan yang ditugaskan akan muncul di sini.'}</p>
+  </div>`;
 }
 
 function renderUsersTable(users) {
@@ -323,6 +388,7 @@ function getAllowedViews(role) {
 function applyRolePermissions() {
   const role = state.user?.role || 'KARYAWAN';
   const allowed = getAllowedViews(role);
+  const isDirector = role === 'DIREKTUR';
 
   document.querySelectorAll('.nav-btn').forEach((button) => {
     const isAllowed = allowed.includes(button.dataset.view);
@@ -331,8 +397,13 @@ function applyRolePermissions() {
 
   const financeView = document.getElementById('financeView');
   const taskForm = document.getElementById('taskForm');
+  const taskAssignmentPanel = document.getElementById('taskAssignmentPanel');
   const transactionForm = document.getElementById('transactionForm');
   const documentForm = document.getElementById('documentForm');
+
+  document.getElementById('directorQuickActions').classList.toggle('hidden', !isDirector);
+  document.getElementById('companyDashboardContent').classList.toggle('hidden', !isDirector);
+  document.getElementById('employeeDashboardNote').classList.toggle('hidden', isDirector);
 
   if (financeView) {
     financeView.style.display = allowed.includes('finance') ? 'block' : 'none';
@@ -351,9 +422,9 @@ function applyRolePermissions() {
   }
 
   if (taskForm) {
-    const canSubmitTask = allowed.includes('tasks');
-    taskForm.querySelectorAll('input, textarea, button').forEach((element) => {
-      element.disabled = !canSubmitTask;
+    taskAssignmentPanel.classList.toggle('hidden', !isDirector);
+    taskForm.querySelectorAll('input, select, textarea, button').forEach((element) => {
+      element.disabled = !isDirector;
     });
   }
 }
@@ -431,6 +502,11 @@ async function loadUsers() {
   const users = await apiFetch('/api/users');
   state.users = users;
   renderUsersTable(users);
+  const assigneeSelect = document.getElementById('taskAssignee');
+  assigneeSelect.innerHTML = '<option value="">Pilih karyawan</option>' + users
+    .filter((user) => user.role === 'KARYAWAN' && user.status === 'active')
+    .map((user) => `<option value="${Number(user.id)}">${escapeHtml(user.name)}</option>`)
+    .join('');
 }
 
 async function loadAudit() {
@@ -467,7 +543,7 @@ async function refreshData() {
   try {
     await loadDashboard();
     if (state.user.role === 'DIREKTUR') {
-        await Promise.all([loadFinance(), loadDocuments(), loadBonus(), loadUsers(), loadAudit()]);
+        await Promise.all([loadFinance(), loadDocuments(), loadBonus(), loadUsers(), loadAudit(), loadTasks()]);
       } else {
         await Promise.all([loadBonus(), loadTasks()]);
       }
@@ -584,6 +660,37 @@ togglePinBtn.addEventListener('click', () => {
 });
 
 document.addEventListener('click', async (event) => {
+  const openTasksButton = event.target.closest('[data-open-tasks]');
+  if (openTasksButton) {
+    setCurrentView('tasks');
+    return;
+  }
+
+  const historySummary = event.target.closest('[data-task-history]');
+  if (historySummary) {
+    const taskId = historySummary.dataset.taskHistory;
+    const historyList = document.querySelector(`[data-task-updates="${taskId}"]`);
+    if (!historyList || historyList.dataset.loaded === 'true') return;
+    historyList.textContent = 'Memuat riwayat progres...';
+    try {
+      const updates = await apiFetch(`/api/tasks/${taskId}/updates`);
+      historyList.innerHTML = updates.length
+        ? updates.map((update) => `
+            <article class="task-history-entry">
+              <div><strong>${Number(update.progress_percent)}%</strong><time>${escapeHtml(new Date(update.submitted_at).toLocaleString('id-ID'))}</time></div>
+              <p>${escapeHtml(update.progress_note)}</p>
+              ${update.result ? `<p><strong>Hasil:</strong> ${escapeHtml(update.result)}</p>` : ''}
+              ${state.user?.role === 'DIREKTUR' ? `<small>${escapeHtml(update.user_name)}</small>` : ''}
+            </article>
+          `).join('')
+        : '<p class="field-help">Belum ada riwayat pembaruan.</p>';
+      historyList.dataset.loaded = 'true';
+    } catch (error) {
+      historyList.textContent = error.message;
+    }
+    return;
+  }
+
   const taskActionButton = event.target.closest('[data-task-action]');
   if (taskActionButton) {
     const taskId = taskActionButton.dataset.taskId;
@@ -619,6 +726,26 @@ document.addEventListener('click', async (event) => {
     } catch (error) {
       alert(error.message);
     }
+  }
+});
+
+document.addEventListener('submit', async (event) => {
+  const progressForm = event.target.closest('[data-progress-form]');
+  if (!progressForm) return;
+  event.preventDefault();
+  const submitButton = progressForm.querySelector('button[type="submit"]');
+  submitButton.disabled = true;
+  try {
+    const values = Object.fromEntries(new FormData(progressForm).entries());
+    await apiFetch(`/api/tasks/${progressForm.dataset.taskId}/progress`, {
+      method: 'POST',
+      body: JSON.stringify(values)
+    });
+    await refreshData();
+  } catch (error) {
+    alert(error.message);
+  } finally {
+    submitButton.disabled = false;
   }
 });
 

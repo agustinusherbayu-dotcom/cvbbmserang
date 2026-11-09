@@ -89,12 +89,29 @@ async function initializeDatabase() {
       assignee_id BIGINT NOT NULL REFERENCES users(id),
       quantity NUMERIC(16, 2) NOT NULL DEFAULT 0,
       status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'in_review', 'approved', 'rejected')),
+      progress_percent INTEGER NOT NULL DEFAULT 0 CHECK (progress_percent BETWEEN 0 AND 100),
+      progress_note TEXT NOT NULL DEFAULT '',
+      result TEXT NOT NULL DEFAULT '',
       evidence_path TEXT,
       bonus_amount NUMERIC(16, 2) NOT NULL DEFAULT 0 CHECK (bonus_amount >= 0),
       created_by BIGINT NOT NULL REFERENCES users(id),
       verified_by BIGINT REFERENCES users(id),
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    ALTER TABLE tasks ADD COLUMN IF NOT EXISTS progress_percent INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE tasks ADD COLUMN IF NOT EXISTS progress_note TEXT NOT NULL DEFAULT '';
+    ALTER TABLE tasks ADD COLUMN IF NOT EXISTS result TEXT NOT NULL DEFAULT '';
+    UPDATE tasks SET progress_percent = 100
+    WHERE status IN ('in_review', 'approved') AND progress_percent = 0;
+    CREATE TABLE IF NOT EXISTS task_progress_updates (
+      id BIGSERIAL PRIMARY KEY,
+      task_id BIGINT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      user_id BIGINT NOT NULL REFERENCES users(id),
+      progress_percent INTEGER NOT NULL CHECK (progress_percent BETWEEN 0 AND 100),
+      progress_note TEXT NOT NULL,
+      result TEXT NOT NULL DEFAULT '',
+      submitted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     CREATE TABLE IF NOT EXISTS documents (
       id BIGSERIAL PRIMARY KEY,
@@ -125,6 +142,7 @@ async function initializeDatabase() {
     );
     CREATE INDEX IF NOT EXISTS transactions_date_idx ON transactions(date DESC);
     CREATE INDEX IF NOT EXISTS tasks_assignee_created_idx ON tasks(assignee_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS task_progress_updates_task_idx ON task_progress_updates(task_id, submitted_at DESC);
     CREATE INDEX IF NOT EXISTS documents_created_idx ON documents(created_at DESC);
     CREATE INDEX IF NOT EXISTS audit_logs_created_idx ON audit_logs(created_at DESC);
     CREATE INDEX IF NOT EXISTS login_rate_limits_reset_idx ON login_rate_limits(reset_at);
@@ -323,21 +341,35 @@ async function getDashboardData(user) {
     });
   }
 
+  const summary = isDirector
+    ? {
+        balance: income - expense,
+        income,
+        expense,
+        totalTransactions: transactions.length,
+        pendingVerification: tasks.filter((task) => task.status === 'in_review').length,
+        approvedTasks: tasks.filter((task) => task.status === 'approved').length,
+        totalBonus: tasks.reduce((sum, task) => sum + Number(task.bonus_amount || 0), 0)
+      }
+    : {
+        assignedTasks: tasks.length,
+        inProgressTasks: tasks.filter((task) => task.status === 'pending' || task.status === 'rejected').length,
+        waitingTasks: tasks.filter((task) => task.status === 'in_review').length,
+        approvedTasks: tasks.filter((task) => task.status === 'approved').length
+      };
+  const visibleTasks = tasks.slice(0, 12).map((task) => {
+    if (isDirector) return task;
+    const { bonus_amount, evidence_path, verified_by, verifier_name, ...employeeTask } = task;
+    return employeeTask;
+  });
+
   return {
     role: user.role,
-    summary: {
-      balance: income - expense,
-      income,
-      expense,
-      totalTransactions: transactions.length,
-      pendingVerification: tasks.filter((task) => task.status === 'in_review').length,
-      approvedTasks: tasks.filter((task) => task.status === 'approved').length,
-      totalBonus: tasks.reduce((sum, task) => sum + Number(task.bonus_amount || 0), 0)
-    },
+    summary,
     transactions: transactions.slice(0, 10),
-    tasks: tasks.slice(0, 12),
+    tasks: visibleTasks,
     activities,
-    monthlySummary,
+    monthlySummary: isDirector ? monthlySummary : [],
     userSummary: {
       completed: tasks.filter((task) => task.status === 'approved').length,
       waiting: tasks.filter((task) => task.status === 'in_review').length,
@@ -646,28 +678,101 @@ app.get('/api/tasks', requireAuth, asyncRoute(async (req, res) => {
         ORDER BY t.created_at DESC
       `)
     : await pool.query(`
-        SELECT t.*, u.name AS assignee_name, v.name AS verifier_name
-        FROM tasks t
-        LEFT JOIN users u ON u.id = t.assignee_id
-        LEFT JOIN users v ON v.id = t.verified_by
-        WHERE t.assignee_id = $1
-        ORDER BY t.created_at DESC
+          SELECT t.id, t.title, t.description, t.assignee_id, t.quantity, t.status,
+                 t.progress_percent, t.progress_note, t.result, t.created_at, t.updated_at,
+                 u.name AS assignee_name
+          FROM tasks t
+          LEFT JOIN users u ON u.id = t.assignee_id
+          WHERE t.assignee_id = $1
+          ORDER BY t.created_at DESC
       `, [req.session.user.id]);
   res.json(result.rows);
 }));
 
-app.post('/api/tasks', requireAuth, asyncRoute(async (req, res) => {
-  const { title, description, quantity } = req.body || {};
-  const numericQuantity = Number(quantity);
-  if (!title || !Number.isFinite(numericQuantity) || numericQuantity <= 0) {
-    return res.status(400).json({ error: 'Judul dan jumlah pekerjaan yang valid wajib diisi.' });
+app.get('/api/tasks/:id/updates', requireAuth, asyncRoute(async (req, res) => {
+  const taskResult = await pool.query('SELECT assignee_id FROM tasks WHERE id = $1', [req.params.id]);
+  const task = taskResult.rows[0];
+  if (!task || (req.session.user.role !== 'DIREKTUR' && String(task.assignee_id) !== String(req.session.user.id))) {
+    return res.status(404).json({ error: 'Pekerjaan tidak ditemukan.' });
   }
+  const updates = await pool.query(`
+    SELECT p.id, p.progress_percent, p.progress_note, p.result, p.submitted_at, u.name AS user_name
+    FROM task_progress_updates p
+    JOIN users u ON u.id = p.user_id
+    WHERE p.task_id = $1
+    ORDER BY p.submitted_at DESC
+    LIMIT 50
+  `, [req.params.id]);
+  res.json(updates.rows);
+}));
+
+app.post('/api/tasks/:id/progress', requireAuth, asyncRoute(async (req, res) => {
+  const { progress_percent, progress_note, result } = req.body || {};
+  const progress = Number(progress_percent);
+  const note = String(progress_note || '').trim();
+  const outcome = String(result || '').trim();
+  if (!Number.isInteger(progress) || progress < 0 || progress > 100 || !note || note.length > 2000 || outcome.length > 3000) {
+    return res.status(400).json({ error: 'Isi progres 0–100%, uraian progres (maks. 2.000 karakter), dan hasil (maks. 3.000 karakter) dengan benar.' });
+  }
+  if (progress === 100 && !outcome) {
+    return res.status(400).json({ error: 'Hasil pekerjaan wajib diisi saat progres mencapai 100%.' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const updated = await client.query(`
+      UPDATE tasks
+      SET progress_percent = $1, progress_note = $2, result = $3,
+          status = CASE WHEN $1 = 100 THEN 'in_review' ELSE 'pending' END,
+          updated_at = NOW()
+      WHERE id = $4 AND assignee_id = $5 AND status <> 'approved'
+      RETURNING id
+    `, [progress, note, outcome, req.params.id, req.session.user.id]);
+    if (!updated.rows[0]) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Pekerjaan tidak ditemukan atau sudah disetujui.' });
+    }
+    await client.query(`
+      INSERT INTO task_progress_updates (task_id, user_id, progress_percent, progress_note, result)
+      VALUES ($1, $2, $3, $4, $5)
+    `, [req.params.id, req.session.user.id, progress, note, outcome]);
+    await client.query(`
+      INSERT INTO audit_logs (user_id, action, details, ip_address)
+      VALUES ($1, 'TASK_PROGRESS_UPDATED', $2, $3)
+    `, [req.session.user.id, `Updated task #${req.params.id} progress to ${progress}%.`, req.ip || 'unknown']);
+    await client.query('COMMIT');
+    res.json({ success: true });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}));
+
+app.post('/api/tasks', requireAuth, requireRole('DIREKTUR'), asyncRoute(async (req, res) => {
+  const { title, description, quantity, assignee_id } = req.body || {};
+  const cleanTitle = String(title || '').trim();
+  const cleanDescription = String(description || '').trim();
+  const numericQuantity = Number(quantity);
+  const assigneeId = Number(assignee_id);
+  if (!cleanTitle || cleanTitle.length > 160 || cleanDescription.length > 3000 ||
+      !Number.isFinite(numericQuantity) || numericQuantity <= 0 ||
+      !Number.isSafeInteger(assigneeId) || assigneeId <= 0) {
+    return res.status(400).json({ error: 'Judul, target hasil, dan karyawan yang ditugaskan wajib diisi dengan benar.' });
+  }
+  const assignee = await pool.query(
+    "SELECT id FROM users WHERE id = $1 AND role = 'KARYAWAN' AND status = 'active'",
+    [assigneeId]
+  );
+  if (!assignee.rows[0]) return res.status(400).json({ error: 'Karyawan yang dipilih tidak aktif atau tidak ditemukan.' });
   const created = await pool.query(`
     INSERT INTO tasks (title, description, assignee_id, quantity, status, bonus_amount, created_by)
-    VALUES ($1, $2, $3, $4, 'pending', 0, $3)
+    VALUES ($1, $2, $3, $4, 'pending', 0, $5)
     RETURNING id
-  `, [String(title).trim(), String(description || ''), req.session.user.id, numericQuantity]);
-  await logAudit(req.session.user.id, 'TASK_CREATED', `Created task #${created.rows[0].id}: ${title}`, req.ip);
+  `, [cleanTitle, cleanDescription, assigneeId, numericQuantity, req.session.user.id]);
+  await logAudit(req.session.user.id, 'TASK_CREATED', `Created task #${created.rows[0].id} for employee #${assigneeId}: ${cleanTitle}`, req.ip);
   res.status(201).json({ success: true, id: created.rows[0].id });
 }));
 

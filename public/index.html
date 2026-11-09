@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#0b1f4d" />
     <title>BBM - Company Management</title>
     <link rel="manifest" href="/manifest.webmanifest" />
-    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/styles.css?v=20261109-brand" />
   </head>
   <body>
     <div id="app" class="app-shell">
@@ -103,6 +103,7 @@
             <p>Pengguna</p>
             <h3 id="userName">-</h3>
             <span id="userRole">-</span>
+            <button id="changePinBtn" class="profile-action-btn" type="button">Ubah PIN saya</button>
             <button id="logoutBtn" class="primary-btn small">Logout</button>
           </div>
         </aside>
@@ -119,6 +120,17 @@
           </header>
 
           <section id="dashboardView" class="view active">
+            <section class="dashboard-hero" aria-label="Sampul CV Banten Bangkit Maju">
+              <div class="dashboard-hero-copy">
+                <span>CV BANTEN BANGKIT MAJU · COMPANY PORTAL</span>
+                <h3>Bertumbuh bersama, melangkah lebih maju.</h3>
+                <p>Ruang kerja terpadu untuk mendukung agroindustri yang berkelanjutan.</p>
+              </div>
+              <div class="dashboard-hero-badge">
+                <span class="hero-badge-dot"></span>
+                Agroindustri berkelanjutan
+              </div>
+            </section>
             <div id="directorQuickActions" class="panel quick-actions-panel">
               <div class="panel-header">
                 <h3>Aksi Cepat</h3>
@@ -387,6 +399,33 @@
           <button type="button" class="indicator-dialog-close" data-close-indicator aria-label="Tutup rincian">×</button>
         </div>
         <div id="indicatorDialogContent" class="indicator-dialog-content"></div>
+      </dialog>
+
+      <dialog id="changePinDialog" class="indicator-dialog pin-dialog" aria-labelledby="changePinTitle">
+        <div class="indicator-dialog-header">
+          <div>
+            <span class="login-kicker">PENGATURAN AKUN</span>
+            <h2 id="changePinTitle">Ubah PIN keamanan</h2>
+          </div>
+          <button type="button" class="indicator-dialog-close" data-close-pin aria-label="Tutup pengaturan PIN">×</button>
+        </div>
+        <form id="changePinForm" class="pin-change-form">
+          <p>Masukkan PIN saat ini, lalu buat PIN baru yang terdiri dari 6 angka.</p>
+          <label>
+            <span>PIN saat ini</span>
+            <input type="password" name="current_pin" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="current-password" required />
+          </label>
+          <label>
+            <span>PIN baru</span>
+            <input type="password" name="new_pin" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="new-password" required />
+          </label>
+          <label>
+            <span>Ulangi PIN baru</span>
+            <input type="password" name="confirm_pin" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="new-password" required />
+          </label>
+          <p id="changePinMessage" class="pin-change-message" aria-live="polite"></p>
+          <button class="primary-btn login-submit" type="submit">Simpan PIN baru</button>
+        </form>
       </dialog>
     </div>
 

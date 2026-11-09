@@ -21,6 +21,9 @@ const userName = document.getElementById('userName');
 const userRole = document.getElementById('userRole');
 const togglePinBtn = document.getElementById('togglePin');
 const pinInput = document.getElementById('pinInput');
+const changePinDialog = document.getElementById('changePinDialog');
+const changePinForm = document.getElementById('changePinForm');
+const changePinMessage = document.getElementById('changePinMessage');
 
 let loginLockTimer = null;
 let loginLockUntil = 0;
@@ -752,6 +755,51 @@ loginForm.addEventListener('submit', async (event) => {
 });
 
 const logoutBtn = document.getElementById('logoutBtn');
+document.getElementById('changePinBtn').addEventListener('click', () => {
+  changePinMessage.textContent = '';
+  changePinMessage.className = 'pin-change-message';
+  changePinForm.reset();
+  changePinDialog.showModal();
+});
+
+document.querySelector('[data-close-pin]').addEventListener('click', () => {
+  changePinDialog.close();
+});
+
+changePinForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const submitButton = changePinForm.querySelector('button[type="submit"]');
+  const values = Object.fromEntries(new FormData(changePinForm).entries());
+  if (values.new_pin !== values.confirm_pin) {
+    changePinMessage.textContent = 'PIN baru dan konfirmasi belum cocok.';
+    changePinMessage.classList.add('error');
+    return;
+  }
+  if (values.current_pin === values.new_pin) {
+    changePinMessage.textContent = 'PIN baru harus berbeda dari PIN saat ini.';
+    changePinMessage.classList.add('error');
+    return;
+  }
+
+  submitButton.disabled = true;
+  changePinMessage.textContent = '';
+  changePinMessage.className = 'pin-change-message';
+  try {
+    await apiFetch('/api/profile/change-pin', {
+      method: 'POST',
+      body: JSON.stringify(values)
+    });
+    changePinForm.reset();
+    changePinMessage.textContent = 'PIN berhasil diperbarui.';
+    changePinMessage.classList.add('success');
+  } catch (error) {
+    changePinMessage.textContent = error.message;
+    changePinMessage.classList.add('error');
+  } finally {
+    submitButton.disabled = false;
+  }
+});
+
 logoutBtn.addEventListener('click', async () => {
   try {
     await apiFetch('/api/logout', { method: 'POST' });

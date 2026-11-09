@@ -456,6 +456,46 @@ app.get('/api/session', (req, res) => {
   res.json({ user: req.session.user || null });
 });
 
+app.post('/api/profile/change-pin', requireAuth, asyncRoute(async (req, res) => {
+  const { current_pin, new_pin, confirm_pin } = req.body || {};
+  const currentPin = String(current_pin || '');
+  const newPin = String(new_pin || '');
+  const confirmPin = String(confirm_pin || '');
+  if (!/^\d{6}$/.test(currentPin) || !/^\d{6}$/.test(newPin) || newPin !== confirmPin) {
+    return res.status(400).json({ error: 'PIN saat ini harus valid dan PIN baru harus cocok, masing-masing 6 digit.' });
+  }
+  if (currentPin === newPin) {
+    return res.status(400).json({ error: 'PIN baru harus berbeda dari PIN saat ini.' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const userResult = await client.query('SELECT pin_hash FROM users WHERE id = $1 FOR UPDATE', [req.session.user.id]);
+    const user = userResult.rows[0];
+    if (!user || !bcrypt.compareSync(currentPin, user.pin_hash)) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'PIN saat ini tidak sesuai.' });
+    }
+
+    await client.query('UPDATE users SET pin_hash = $1 WHERE id = $2', [
+      bcrypt.hashSync(newPin, 12),
+      req.session.user.id
+    ]);
+    await client.query(`
+      INSERT INTO audit_logs (user_id, action, details, ip_address)
+      VALUES ($1, 'PIN_CHANGED', 'User changed their own PIN.', $2)
+    `, [req.session.user.id, req.ip || 'unknown']);
+    await client.query('COMMIT');
+    res.json({ success: true });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}));
+
 app.get('/api/dashboard', requireAuth, asyncRoute(async (req, res) => {
   res.json(await getDashboardData(req.session.user));
 }));

@@ -1,0 +1,17 @@
+{
+  "name": "CV Banten Bangkit Maju",
+  "short_name": "BBM",
+  "description": "Integrated Company Management & Financial System",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f5f7fb",
+  "theme_color": "#0b1f4d",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 128'%3E%3Crect width='128' height='128' rx='24' fill='%230b1f4d'/%3E%3Ctext x='50%25' y='57%25' dominant-baseline='middle' text-anchor='middle' font-size='48' font-weight='700' fill='white' font-family='Arial'%3E BBM %3C/text%3E%3C/svg%3E",
+      "sizes": "128x128",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

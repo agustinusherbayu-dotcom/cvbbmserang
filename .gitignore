@@ -1,0 +1,10 @@
+node_modules/
+.env
+.env.*
+!.env.example
+.vercel/
+bbm.db
+bbm.db-shm
+bbm.db-wal
+uploads/
+exports/

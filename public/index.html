@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0b1f4d" />
+    <title>BBM - Company Management</title>
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div id="app" class="app-shell">
+      <div id="loginScreen" class="login-screen active">
+        <div class="login-card">
+          <div class="brand-block">
+            <img class="brand-logo" src="/images/logo-bbm.png" alt="Logo CV Banten Bangkit Maju" />
+            <div>
+              <h1>CV Banten Bangkit Maju</h1>
+              <p>Integrated Company Management & Financial System</p>
+            </div>
+          </div>
+
+          <form id="loginForm" class="login-form">
+            <label>
+              <span>Nomor Telepon</span>
+              <input id="phoneInput" type="tel" name="phone" placeholder="0812xxxxxxxx" required />
+            </label>
+
+            <label>
+              <span>PIN 6 Digit</span>
+              <div class="password-wrap">
+                <input id="pinInput" type="password" name="pin" maxlength="6" placeholder="••••••" required />
+                <button type="button" id="togglePin" class="ghost-btn" aria-label="Tampilkan PIN">Lihat</button>
+              </div>
+            </label>
+
+            <button type="submit" class="primary-btn">Masuk</button>
+            <p id="loginMessage" class="message" aria-live="polite"></p>
+          </form>
+        </div>
+      </div>
+
+      <div id="dashboardScreen" class="dashboard-screen hidden">
+        <aside class="sidebar">
+          <div class="brand-panel">
+            <img class="brand-mini" src="/images/logo-bbm.png" alt="Logo BBM" />
+            <div>
+              <strong>BBM</strong>
+              <small>Company system</small>
+            </div>
+          </div>
+
+          <nav class="nav-menu">
+            <button class="nav-btn active" data-view="dashboard">Dashboard</button>
+            <button class="nav-btn" data-view="finance">Keuangan</button>
+            <button class="nav-btn" data-view="documents">Dokumen</button>
+            <button class="nav-btn" data-view="bonus">Bonus</button>
+            <button class="nav-btn" data-view="tasks">Pekerjaan</button>
+            <button class="nav-btn" data-view="users">Pengguna</button>
+            <button class="nav-btn" data-view="audit">Audit</button>
+          </nav>
+
+          <div class="profile-box">
+            <p>Pengguna</p>
+            <h3 id="userName">-</h3>
+            <span id="userRole">-</span>
+            <button id="logoutBtn" class="primary-btn small">Logout</button>
+          </div>
+        </aside>
+
+        <main class="dashboard-main">
+          <header class="topbar">
+            <div>
+              <h2 id="pageTitle">Dashboard</h2>
+            </div>
+            <div class="topbar-indicator">
+              <span class="status-dot"></span>
+              Sistem aktif
+            </div>
+          </header>
+
+          <section id="dashboardView" class="view active">
+            <div class="panel quick-actions-panel">
+              <div class="panel-header">
+                <h3>Aksi Cepat</h3>
+              </div>
+              <div class="quick-actions">
+                <button class="primary-btn" id="exportExcelBtn" type="button">Export Excel</button>
+              </div>
+            </div>
+            <div id="summaryGrid" class="summary-grid"></div>
+            <div class="panel-grid two-col">
+              <div class="panel">
+                <div class="panel-header">
+                  <h3>Grafik Pemasukan dan Pengeluaran</h3>
+                </div>
+                <div id="chartBars" class="chart-bars"></div>
+              </div>
+              <div class="panel">
+                <div class="panel-header">
+                  <h3>Rekap Bulanan</h3>
+                </div>
+                <div id="monthlySummary" class="mini-table"></div>
+              </div>
+            </div>
+            <div class="panel-grid two-col">
+              <div class="panel">
+                <div class="panel-header">
+                  <h3>Transaksi Terbaru</h3>
+                </div>
+                <div id="recentTransactions" class="list-table"></div>
+              </div>
+              <div class="panel">
+                <div class="panel-header">
+                  <h3>Aktivitas Terbaru</h3>
+                </div>
+                <div id="recentActivity" class="list-table"></div>
+              </div>
+            </div>
+          </section>
+
+          <section id="financeView" class="view hidden">
+            <div class="panel">
+              <div class="panel-header">
+                <h3>Input Transaksi</h3>
+              </div>
+              <form id="transactionForm" class="transaction-form">
+                <div class="form-grid">
+                  <label>
+                    <span>Jenis</span>
+                    <select name="type" required>
+                      <option value="income">Pemasukan</option>
+                      <option value="expense">Pengeluaran</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>Tanggal</span>
+                    <input type="date" name="date" required />
+                  </label>
+                  <label>
+                    <span>Kategori</span>
+                    <input type="text" name="category" placeholder="Operasional" required />
+                  </label>
+                  <label>
+                    <span>Nama Proyek / Sumber</span>
+                    <input type="text" name="project_name" placeholder="Proyek X" required />
+                  </label>
+                  <label>
+                    <span>Nominal</span>
+                    <input type="number" name="amount" min="0" required />
+                  </label>
+                  <label>
+                    <span>Metode Pembayaran</span>
+                    <input type="text" name="payment_method" placeholder="Transfer Bank" />
+                  </label>
+                  <label>
+                    <span>Nama Pengirim / Pelanggan</span>
+                    <input type="text" name="counterparty" placeholder="PT. ABC" />
+                  </label>
+                  <label>
+                    <span>Bukti attachment</span>
+                    <input type="file" name="attachment" accept="image/*,.pdf" />
+                  </label>
+                </div>
+                <label>
+                  <span>Keterangan</span>
+                  <textarea name="description" rows="3" placeholder="Catatan tambahan..."></textarea>
+                </label>
+                <button type="submit" class="primary-btn">Simpan Transaksi</button>
+              </form>
+            </div>
+
+            <div class="panel">
+              <div class="panel-header">
+                <h3>Daftar Transaksi</h3>
+              </div>
+              <div id="financeTable" class="list-table"></div>
+            </div>
+          </section>
+
+          <section id="documentsView" class="view hidden">
+            <div class="panel">
+              <div class="panel-header">
+                <h3>Dokumen Keuangan & Proyek</h3>
+              </div>
+              <form id="documentForm" class="transaction-form" enctype="multipart/form-data">
+                <div class="form-grid">
+                  <label>
+                    <span>Judul Dokumen</span>
+                    <input type="text" name="title" required />
+                  </label>
+                  <label>
+                    <span>Kategori</span>
+                    <input type="text" name="category" placeholder="Proyek / Keuangan / Operasional" required />
+                  </label>
+                </div>
+                <label>
+                  <span>Deskripsi</span>
+                  <textarea name="description" rows="3"></textarea>
+                </label>
+                <label>
+                  <span>File dokumen</span>
+                  <input type="file" name="attachment" accept=".pdf,.doc,.docx,image/*" />
+                </label>
+                <button type="submit" class="primary-btn">Simpan Dokumen</button>
+              </form>
+            </div>
+
+            <div class="panel">
+              <div class="panel-header">
+                <h3>Daftar Dokumen</h3>
+              </div>
+              <div id="documentTable" class="list-table"></div>
+            </div>
+          </section>
+
+          <section id="bonusView" class="view hidden">
+            <div class="panel">
+              <div class="panel-header">
+                <h3>Ringkasan Bonus</h3>
+              </div>
+              <div id="bonusSummary" class="bonus-summary"></div>
+            </div>
+            <div class="panel">
+              <div class="panel-header">
+                <h3>Daftar Bonus</h3>
+              </div>
+              <div id="bonusTable" class="list-table"></div>
+            </div>
+          </section>
+
+          <section id="tasksView" class="view hidden">
+            <div class="panel">
+              <div class="panel-header">
+                <h3>Catat Pekerjaan</h3>
+              </div>
+              <form id="taskForm" class="transaction-form">
+                <div class="form-grid">
+                  <label>
+                    <span>Judul Pekerjaan</span>
+                    <input type="text" name="title" required />
+                  </label>
+                  <label>
+                    <span>Jumlah Hasil</span>
+                    <input type="number" name="quantity" min="0" required />
+                  </label>
+                </div>
+                <label>
+                  <span>Deskripsi</span>
+                  <textarea name="description" rows="3"></textarea>
+                </label>
+                <button type="submit" class="primary-btn">Simpan Pekerjaan</button>
+              </form>
+            </div>
+
+            <div class="panel">
+              <div class="panel-header">
+                <h3>Daftar Pekerjaan</h3>
+              </div>
+              <div id="taskTable" class="list-table"></div>
+            </div>
+          </section>
+
+          <section id="usersView" class="view hidden">
+            <div class="panel">
+              <div class="panel-header">
+                <h3>Tambah Pengguna Baru</h3>
+              </div>
+              <form id="userCreateForm" class="transaction-form">
+                <div class="form-grid">
+                  <label>
+                    <span>Nama Lengkap</span>
+                    <input type="text" name="name" placeholder="Nama karyawan" required />
+                  </label>
+                  <label>
+                    <span>Nomor Telepon</span>
+                    <input type="tel" name="phone" placeholder="0812xxxxxxxx" required />
+                  </label>
+                  <label>
+                    <span>PIN 6 Digit</span>
+                    <input type="password" name="pin" maxlength="6" inputmode="numeric" placeholder="123456" required />
+                  </label>
+                  <label>
+                    <span>Role</span>
+                    <select name="role">
+                      <option value="KARYAWAN">KARYAWAN</option>
+                      <option value="MANAGER">MANAGER</option>
+                      <option value="KOMISARIS">KOMISARIS</option>
+                      <option value="DIREKTUR">DIREKTUR</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>Status</span>
+                    <select name="status">
+                      <option value="active">active</option>
+                      <option value="inactive">inactive</option>
+                      <option value="suspended">suspended</option>
+                    </select>
+                  </label>
+                </div>
+                <button type="submit" class="primary-btn">Simpan Pengguna</button>
+              </form>
+            </div>
+
+            <div class="panel">
+              <div class="panel-header">
+                <h3>Daftar Pengguna</h3>
+              </div>
+              <div id="userTable" class="list-table"></div>
+            </div>
+          </section>
+
+          <section id="auditView" class="view hidden">
+            <div class="panel">
+              <div class="panel-header">
+                <h3>Log Audit</h3>
+              </div>
+              <div id="auditTable" class="list-table"></div>
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

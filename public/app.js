@@ -81,29 +81,152 @@ function renderSummaryCards(data) {
   document.getElementById('directorQuickActions').classList.toggle('hidden', !isDirector);
   const cards = isDirector
     ? [
-        { label: 'Total Saldo', value: data?.summary?.balance ?? 0, format: 'currency' },
-        { label: 'Total Pemasukan', value: data?.summary?.income ?? 0, format: 'currency' },
-        { label: 'Total Pengeluaran', value: data?.summary?.expense ?? 0, format: 'currency' },
-        { label: 'Total Transaksi', value: data?.summary?.totalTransactions ?? 0, format: 'number' },
-        { label: 'Pekerjaan Menunggu Verifikasi', value: data?.summary?.pendingVerification ?? 0, format: 'number' },
-        { label: 'Total Bonus Karyawan', value: data?.summary?.totalBonus ?? 0, format: 'currency' }
-      ]
+      { key: 'balance', label: 'Total Saldo', value: data?.summary?.balance ?? 0, format: 'currency' },
+      { key: 'income', label: 'Total Pemasukan', value: data?.summary?.income ?? 0, format: 'currency' },
+      { key: 'expense', label: 'Total Pengeluaran', value: data?.summary?.expense ?? 0, format: 'currency' },
+      { key: 'transactions', label: 'Total Transaksi', value: data?.summary?.totalTransactions ?? 0, format: 'number' },
+      { key: 'pendingTasks', label: 'Pekerjaan Menunggu Verifikasi', value: data?.summary?.pendingVerification ?? 0, format: 'number' },
+      { key: 'approvedTasks', label: 'Pekerjaan Disetujui', value: data?.summary?.approvedTasks ?? 0, format: 'number' },
+      { key: 'bonuses', label: 'Total Bonus Karyawan', value: data?.summary?.totalBonus ?? 0, format: 'currency' }
+    ]
     : [
-        { label: 'Tugas ditugaskan', value: data?.summary?.assignedTasks ?? 0, format: 'number' },
-        { label: 'Dalam pengerjaan', value: data?.summary?.inProgressTasks ?? 0, format: 'number' },
-        { label: 'Menunggu pemeriksaan', value: data?.summary?.waitingTasks ?? 0, format: 'number' },
-        { label: 'Selesai disetujui', value: data?.summary?.approvedTasks ?? 0, format: 'number' }
-      ];
+      { key: 'assignedTasks', label: 'Tugas ditugaskan', value: data?.summary?.assignedTasks ?? 0, format: 'number' },
+      { key: 'inProgressTasks', label: 'Dalam pengerjaan', value: data?.summary?.inProgressTasks ?? 0, format: 'number' },
+      { key: 'waitingTasks', label: 'Menunggu pemeriksaan', value: data?.summary?.waitingTasks ?? 0, format: 'number' },
+      { key: 'approvedTasks', label: 'Selesai disetujui', value: data?.summary?.approvedTasks ?? 0, format: 'number' }
+    ];
 
   summaryGrid.innerHTML = cards.map(card => {
     const value = card.format === 'currency' ? formatCurrency(card.value) : card.value;
     return `
-      <div class="summary-card">
+      <button type="button" class="summary-card" data-dashboard-detail="${card.key}" aria-label="Lihat rincian: ${escapeHtml(card.label)}">
         <span class="label">${escapeHtml(card.label)}</span>
         <p class="value">${value}</p>
-      </div>
+        <span class="summary-card-hint">Lihat rincian <span aria-hidden="true">→</span></span>
+      </button>
     `;
   }).join('');
+}
+
+function renderTransactionDetails(transactions, type) {
+  const filtered = type === 'balance' || type === 'all'
+    ? transactions
+    : transactions.filter((transaction) => transaction.type === type);
+  const income = transactions
+    .filter((transaction) => transaction.type === 'income')
+    .reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0);
+  const expense = transactions
+    .filter((transaction) => transaction.type === 'expense')
+    .reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0);
+  const title = type === 'balance' ? 'Rangkuman saldo perusahaan' : type === 'income' ? 'Rincian pemasukan' : type === 'expense' ? 'Rincian pengeluaran' : 'Daftar transaksi';
+  const summary = type === 'balance'
+    ? `<div class="indicator-detail-summary">
+        <span>Total pemasukan <strong>${formatCurrency(income)}</strong></span>
+        <span>Total pengeluaran <strong>${formatCurrency(expense)}</strong></span>
+        <span>Saldo <strong>${formatCurrency(income - expense)}</strong></span>
+      </div>`
+    : '';
+  const rows = filtered.map((transaction) => `
+    <article class="indicator-detail-row">
+      <div>
+        <strong>${escapeHtml(transaction.project_name || transaction.category || 'Transaksi')}</strong>
+        <span>${new Date(transaction.date).toLocaleDateString('id-ID')} · ${escapeHtml(transaction.category || '-')}</span>
+      </div>
+      <strong class="${transaction.type === 'income' ? 'detail-income' : 'detail-expense'}">${formatCurrency(transaction.amount)}</strong>
+    </article>
+  `).join('');
+  return `<h3>${title}</h3>${summary}${rows || '<p class="indicator-empty">Belum ada data untuk indikator ini.</p>'}`;
+}
+
+function renderTaskDetails(tasks, key) {
+  const filtered = key === 'pendingTasks'
+    ? tasks.filter((task) => task.status === 'in_review')
+    : key === 'approvedTasks'
+      ? tasks.filter((task) => task.status === 'approved')
+      : key === 'inProgressTasks'
+        ? tasks.filter((task) => task.status === 'pending' || task.status === 'rejected')
+        : tasks;
+  const rows = filtered.map((task) => {
+    const statusLabels = {
+      pending: 'Dalam pengerjaan',
+      in_review: 'Menunggu pemeriksaan',
+      approved: 'Disetujui',
+      rejected: 'Perlu perbaikan'
+    };
+    const taskStatus = statusLabels[task.status] || 'Belum selesai';
+    const assignee = state.user?.role === 'DIREKTUR' && task.assignee_name
+      ? `<span>${escapeHtml(task.assignee_name)}</span>`
+      : '';
+    const bonus = state.user?.role === 'DIREKTUR' && task.bonus_amount !== undefined
+      ? `<span>Bonus: ${formatCurrency(task.bonus_amount)}</span>`
+      : '';
+    return `
+      <article class="indicator-detail-row indicator-task-row">
+        <div>
+          <strong>${escapeHtml(task.title)}</strong>
+          <span>${assignee}${assignee ? ' · ' : ''}${taskStatus} · Progres ${Math.max(0, Math.min(100, Number(task.progress_percent) || 0))}%</span>
+          ${task.progress_note ? `<p>${escapeHtml(task.progress_note)}</p>` : ''}
+          ${task.result ? `<p><strong>Hasil:</strong> ${escapeHtml(task.result)}</p>` : ''}
+        </div>
+        ${bonus}
+      </article>
+    `;
+  }).join('');
+  return rows || '<p class="indicator-empty">Belum ada pekerjaan pada indikator ini.</p>';
+}
+
+async function openIndicatorDetails(key) {
+  const dialog = document.getElementById('indicatorDialog');
+  const title = document.getElementById('indicatorDialogTitle');
+  const content = document.getElementById('indicatorDialogContent');
+  const isDirector = state.user?.role === 'DIREKTUR';
+  const labels = {
+    balance: 'Total Saldo',
+    income: 'Total Pemasukan',
+    expense: 'Total Pengeluaran',
+    transactions: 'Total Transaksi',
+    pendingTasks: 'Pekerjaan Menunggu Verifikasi',
+    approvedTasks: 'Pekerjaan Disetujui',
+    bonuses: 'Total Bonus Karyawan',
+    assignedTasks: 'Tugas ditugaskan',
+    inProgressTasks: 'Dalam pengerjaan',
+    waitingTasks: 'Menunggu pemeriksaan'
+  };
+  title.textContent = labels[key] || 'Rincian indikator';
+  content.innerHTML = '<p class="indicator-empty">Memuat rincian...</p>';
+  dialog.showModal();
+
+  try {
+    if (['balance', 'income', 'expense', 'transactions'].includes(key) && isDirector) {
+      const transactions = await apiFetch('/api/transactions');
+      content.innerHTML = renderTransactionDetails(
+        transactions,
+        key === 'transactions' ? 'all' : key
+      );
+      return;
+    }
+
+    if (key === 'bonuses') {
+      const bonuses = await apiFetch('/api/bonus');
+      const total = bonuses.reduce((sum, bonus) => sum + Number(bonus.bonus_amount || 0), 0);
+      const rows = bonuses.map((bonus) => `
+        <article class="indicator-detail-row">
+          <div>
+            <strong>${escapeHtml(bonus.title)}</strong>
+            <span>${state.user?.role === 'DIREKTUR' ? `${escapeHtml(bonus.assignee_name || '-')} · ` : ''}${bonus.status === 'approved' ? 'Disetujui' : bonus.status === 'in_review' ? 'Menunggu pemeriksaan' : 'Belum disetujui'}</span>
+          </div>
+          <strong>${formatCurrency(bonus.bonus_amount)}</strong>
+        </article>
+      `).join('');
+      content.innerHTML = `<div class="indicator-detail-summary"><span>Total bonus tercatat<strong>${formatCurrency(total)}</strong></span></div>${rows || '<p class="indicator-empty">Belum ada data bonus.</p>'}`;
+      return;
+    }
+
+    const tasks = await apiFetch('/api/tasks');
+    content.innerHTML = renderTaskDetails(tasks, key);
+  } catch (error) {
+    content.innerHTML = `<p class="indicator-error">${escapeHtml(error.message)}</p>`;
+  }
 }
 
 function renderChart(data) {
@@ -660,6 +783,17 @@ togglePinBtn.addEventListener('click', () => {
 });
 
 document.addEventListener('click', async (event) => {
+  const indicatorCard = event.target.closest('[data-dashboard-detail]');
+  if (indicatorCard) {
+    await openIndicatorDetails(indicatorCard.dataset.dashboardDetail);
+    return;
+  }
+
+  if (event.target.closest('[data-close-indicator]')) {
+    document.getElementById('indicatorDialog').close();
+    return;
+  }
+
   const openTasksButton = event.target.closest('[data-open-tasks]');
   if (openTasksButton) {
     setCurrentView('tasks');

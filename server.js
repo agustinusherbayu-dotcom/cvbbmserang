@@ -48,9 +48,10 @@ const s3Config = process.env.R2_ACCOUNT_ID && process.env.R2_ACCESS_KEY_ID && pr
   : null;
 const s3 = s3Config ? new S3Client(s3Config) : null;
 const bucketName = process.env.R2_BUCKET_NAME;
+const MAX_UPLOAD_SIZE_BYTES = 3 * 1024 * 1024;
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 4 * 1024 * 1024 }
+  limits: { fileSize: MAX_UPLOAD_SIZE_BYTES }
 });
 
 function asyncRoute(handler) {
@@ -911,7 +912,7 @@ app.use((error, _req, res, _next) => {
   console.error(error);
   if (error instanceof multer.MulterError) {
     return res.status(error.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({
-      error: error.code === 'LIMIT_FILE_SIZE' ? 'Ukuran file maksimal 4 MB.' : 'Upload file tidak valid.'
+      error: error.code === 'LIMIT_FILE_SIZE' ? 'Ukuran file maksimal 3 MB. Kompres file lalu coba kembali.' : 'Upload file tidak valid.'
     });
   }
   res.status(error.status || 500).json({

@@ -76,6 +76,20 @@ function formatCurrency(value) {
   }).format(Number(value || 0));
 }
 
+function validateUploadSize(form) {
+  const fileInput = form.querySelector('input[type="file"]');
+  const file = fileInput?.files?.[0];
+  if (!file) return true;
+
+  const maxBytes = Number(fileInput.dataset.maxUpload) || 3 * 1024 * 1024;
+  if (file.size <= maxBytes) return true;
+
+  alert(`Ukuran file "${file.name}" ${ (file.size / (1024 * 1024)).toFixed(2) } MB. Batas upload 3 MB agar tidak ditolak Vercel. Kompres file terlebih dahulu, lalu coba kembali.`);
+  fileInput.value = '';
+  fileInput.focus();
+  return false;
+}
+
 function renderSummaryCards(data) {
   const summaryGrid = document.getElementById('summaryGrid');
   const isDirector = state.user?.role === 'DIREKTUR';
@@ -601,7 +615,10 @@ async function apiFetch(url, options = {}) {
 
   if (!res.ok) {
     const retryAfter = Number(res.headers.get('retry-after') || data.retry_after || 0);
-    const error = new Error(data.error || data.message || 'Request failed');
+    const message = res.status === 413
+      ? 'Ukuran file atau request terlalu besar. Batas file 3 MB; kompres file lalu coba kembali.'
+      : data.error || data.message || 'Request failed';
+    const error = new Error(message);
     error.retryAfter = retryAfter;
     error.status = res.status;
     throw error;
@@ -934,6 +951,7 @@ document.addEventListener('submit', async (event) => {
 document.getElementById('transactionForm').addEventListener('submit', async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
+  if (!validateUploadSize(form)) return;
   const formData = new FormData(form);
 
   try {
@@ -969,6 +987,7 @@ document.getElementById('taskForm').addEventListener('submit', async (event) => 
 document.getElementById('documentForm').addEventListener('submit', async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
+  if (!validateUploadSize(form)) return;
   const formData = new FormData(form);
 
   try {

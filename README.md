@@ -58,4 +58,4 @@ Set the environment variables above before starting. The schema is initialized a
 
 ## Deploy to Vercel
 
-The root `server.js` exports the Express app for Vercel's zero-configuration Express support; `vercel.json` includes the static frontend assets. Create the Neon database and private R2 bucket, set all required environment variables in Vercel, then deploy. Vercel's filesystem is not used for application data. Uploads are limited to 4 MB to fit serverless request limits. The login attempt limit is stored in PostgreSQL so it is shared across serverless instances.
+The root `server.js` exports the Express app for Vercel's zero-configuration Express support; `vercel.json` includes the static frontend assets. Create the Neon database and private R2 bucket, set all required environment variables in Vercel, then deploy. Vercel's filesystem is not used for application data. Document and transaction attachments are limited to 3 MB to leave room for multipart request overhead under Vercel's serverless payload limit. The login attempt limit is stored in PostgreSQL so it is shared across serverless instances.

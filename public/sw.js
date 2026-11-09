@@ -1,4 +1,4 @@
-const CACHE_NAME = 'bbm-static-v5';
+const CACHE_NAME = 'bbm-static-v6';
 const ASSETS = ['/', '/index.html', '/styles.css?v=20261109-brand', '/app.js', '/manifest.webmanifest', '/images/logo-bbm.png'];
 
 self.addEventListener('install', (event) => {

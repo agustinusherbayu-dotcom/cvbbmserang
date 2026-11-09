@@ -222,7 +222,8 @@
                   </label>
                   <label>
                     <span>Bukti attachment</span>
-                    <input type="file" name="attachment" accept="image/*,.pdf" />
+                    <input type="file" name="attachment" accept="image/*,.pdf" data-max-upload="3145728" />
+                    <small class="field-help">Maksimal 3 MB agar dapat diunggah ke Vercel. Kompres file yang lebih besar terlebih dahulu.</small>
                     <small class="field-help" data-storage-note hidden></small>
                   </label>
                 </div>
@@ -264,7 +265,8 @@
                 </label>
                 <label>
                   <span>File dokumen</span>
-                  <input type="file" name="attachment" accept=".pdf,.doc,.docx,image/*" />
+                  <input type="file" name="attachment" accept=".pdf,.doc,.docx,image/*" data-max-upload="3145728" />
+                  <small class="field-help">Maksimal 3 MB agar dapat diunggah ke Vercel. Kompres file yang lebih besar terlebih dahulu.</small>
                   <small class="field-help" data-storage-note hidden></small>
                 </label>
                 <button type="submit" class="primary-btn">Simpan Dokumen</button>

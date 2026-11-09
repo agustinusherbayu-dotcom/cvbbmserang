@@ -15,6 +15,7 @@ const dashboardScreen = document.getElementById('dashboardScreen');
 const loginForm = document.getElementById('loginForm');
 const loginMessage = document.getElementById('loginMessage');
 const loginSubmitButton = loginForm.querySelector('button[type="submit"]');
+const loginSubmitLabel = loginSubmitButton.querySelector('span');
 const pageTitle = document.getElementById('pageTitle');
 const userName = document.getElementById('userName');
 const userRole = document.getElementById('userRole');
@@ -23,6 +24,12 @@ const pinInput = document.getElementById('pinInput');
 
 let loginLockTimer = null;
 let loginLockUntil = 0;
+
+document.getElementById('loginYear').textContent = new Date().getFullYear();
+
+function setLoginSubmitLabel(text) {
+  loginSubmitLabel.textContent = text;
+}
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, (character) => ({
@@ -38,7 +45,7 @@ function setLoginLock(retryAfterSeconds) {
   const seconds = Number(retryAfterSeconds) > 0 ? Number(retryAfterSeconds) : 15;
   loginLockUntil = Date.now() + seconds * 1000;
   loginSubmitButton.disabled = true;
-  loginSubmitButton.textContent = `Tunggu ${seconds}s`;
+  setLoginSubmitLabel(`Tunggu ${seconds}s`);
   loginMessage.textContent = `Terlalu banyak percobaan login. Coba lagi dalam ${seconds} detik.`;
 
   if (loginLockTimer) {
@@ -47,12 +54,12 @@ function setLoginLock(retryAfterSeconds) {
 
   loginLockTimer = setInterval(() => {
     const remaining = Math.max(0, Math.ceil((loginLockUntil - Date.now()) / 1000));
-    loginSubmitButton.textContent = remaining > 0 ? `Tunggu ${remaining}s` : 'Masuk';
+    setLoginSubmitLabel(remaining > 0 ? `Tunggu ${remaining}s` : 'Masuk dengan aman');
 
     if (remaining <= 0) {
       clearInterval(loginLockTimer);
       loginSubmitButton.disabled = false;
-      loginSubmitButton.textContent = 'Masuk';
+      setLoginSubmitLabel('Masuk dengan aman');
       loginMessage.textContent = '';
     }
   }, 1000);
@@ -531,7 +538,7 @@ loginForm.addEventListener('submit', async (event) => {
       loginLockTimer = null;
     }
     loginSubmitButton.disabled = false;
-    loginSubmitButton.textContent = 'Masuk';
+    setLoginSubmitLabel('Masuk dengan aman');
     state.user = result.user;
     loginMessage.textContent = '';
     showDashboard();

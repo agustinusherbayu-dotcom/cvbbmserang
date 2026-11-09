@@ -11,32 +11,71 @@
   <body>
     <div id="app" class="app-shell">
       <div id="loginScreen" class="login-screen active">
-        <div class="login-card">
-          <div class="brand-block">
-            <img class="brand-logo" src="/images/logo-bbm.png" alt="Logo CV Banten Bangkit Maju" />
-            <div>
-              <h1>CV Banten Bangkit Maju</h1>
-              <p>Integrated Company Management & Financial System</p>
+        <div class="login-layout">
+          <section class="login-story" aria-label="Tentang BBM">
+            <div class="story-brand">
+              <img class="story-logo" src="/images/logo-bbm.png" alt="Logo CV Banten Bangkit Maju" />
+              <span>BBM <i>Company Portal</i></span>
             </div>
-          </div>
 
-          <form id="loginForm" class="login-form">
-            <label>
-              <span>Nomor Telepon</span>
-              <input id="phoneInput" type="tel" name="phone" placeholder="0812xxxxxxxx" required />
-            </label>
+            <div class="story-copy">
+              <span class="eyebrow"><span class="eyebrow-dot"></span> Satu ruang untuk bertumbuh</span>
+              <h1>Bersama membangun <em>masa depan</em> yang lebih baik.</h1>
+              <p>Kelola pekerjaan, bonus, dan aktivitas perusahaan dengan lebih mudah dalam satu tempat.</p>
+            </div>
 
-            <label>
-              <span>PIN 6 Digit</span>
-              <div class="password-wrap">
-                <input id="pinInput" type="password" name="pin" maxlength="6" placeholder="••••••" required />
-                <button type="button" id="togglePin" class="ghost-btn" aria-label="Tampilkan PIN">Lihat</button>
+            <div class="story-footer">
+              <span class="story-line"></span>
+              <span>Agroindustri berkelanjutan</span>
+            </div>
+            <div class="story-orb story-orb-one"></div>
+            <div class="story-orb story-orb-two"></div>
+          </section>
+
+          <section class="login-panel">
+            <div class="login-card">
+              <div class="login-heading">
+                <span class="login-kicker">SELAMAT DATANG KEMBALI</span>
+                <h2>Masuk ke akun Anda</h2>
+                <p>Gunakan nomor telepon dan PIN yang terdaftar.</p>
               </div>
-            </label>
 
-            <button type="submit" class="primary-btn">Masuk</button>
-            <p id="loginMessage" class="message" aria-live="polite"></p>
-          </form>
+              <form id="loginForm" class="login-form">
+                <label>
+                  <span>Nomor telepon</span>
+                  <div class="input-wrap">
+                    <span class="input-icon" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" fill="none"><path d="M7.2 3.5h2.1l1.1 4.1-1.6 1.6a15.4 15.4 0 0 0 6 6l1.6-1.6 4.1 1.1v2.1c0 1.1-.9 2-2 2C10 18.8 5.2 14 5.2 7.5c0-1.1.9-2 2-2Z" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    </span>
+                    <input id="phoneInput" type="tel" name="phone" placeholder="Contoh: 08xxxxxxxxxx" autocomplete="tel" required />
+                  </div>
+                </label>
+
+                <label>
+                  <span>PIN keamanan <small>6 digit</small></span>
+                  <div class="password-wrap input-wrap">
+                    <span class="input-icon" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" fill="none"><rect x="4.5" y="10" width="15" height="10.5" rx="2.5" stroke="currentColor" stroke-width="1.7"/><path d="M8 10V7.5a4 4 0 0 1 8 0V10m-4 4v2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+                    </span>
+                    <input id="pinInput" type="password" name="pin" maxlength="6" inputmode="numeric" pattern="[0-9]{6}" placeholder="Masukkan PIN" autocomplete="current-password" required />
+                    <button type="button" id="togglePin" class="ghost-btn" aria-label="Tampilkan PIN">Lihat</button>
+                  </div>
+                </label>
+
+                <button type="submit" class="primary-btn login-submit">
+                  <span>Masuk dengan aman</span>
+                  <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </button>
+                <p id="loginMessage" class="message" aria-live="polite"></p>
+              </form>
+
+              <div class="login-security">
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3.5 19 6v5.2c0 4.2-2.8 7.5-7 9.3-4.2-1.8-7-5.1-7-9.3V6l7-2.5Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="m9 12 2 2 4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <span>Akses aman dan khusus untuk tim BBM</span>
+              </div>
+            </div>
+            <div class="login-copyright">© <span id="loginYear"></span> CV Banten Bangkit Maju</div>
+          </section>
         </div>
       </div>
 

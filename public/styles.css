@@ -104,6 +104,12 @@ select {
   font-weight: 600;
 }
 
+.field-help {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 400;
+}
+
 .login-form input,
 .transaction-form input,
 .transaction-form select,

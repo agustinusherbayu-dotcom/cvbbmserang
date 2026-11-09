@@ -471,6 +471,19 @@ async function refreshData() {
 
 async function loadSession() {
   try {
+    const health = await apiFetch('/api/health');
+    if (!health.fileStorageAvailable) {
+      document.querySelectorAll('[data-storage-note]').forEach((note) => {
+        note.hidden = false;
+        note.textContent = 'Penyimpanan lampiran belum diaktifkan. Form dan data tanpa file tetap dapat disimpan.';
+        note.previousElementSibling.disabled = true;
+      });
+    }
+  } catch (error) {
+    console.error('Gagal memeriksa konfigurasi penyimpanan file:', error);
+  }
+
+  try {
     const session = await apiFetch('/api/session');
     if (session.user) {
       state.user = session.user;

@@ -672,7 +672,11 @@ app.post('/api/tasks', requireAuth, asyncRoute(async (req, res) => {
 }));
 
 app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', app: 'CV Banten Bangkit Maju' });
+  res.json({
+    status: 'ok',
+    app: 'CV Banten Bangkit Maju',
+    fileStorageAvailable: Boolean(s3 && bucketName)
+  });
 });
 
 app.get('/api/export/excel', requireAuth, requireRole('DIREKTUR'), asyncRoute(async (_req, res) => {

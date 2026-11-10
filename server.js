@@ -128,6 +128,16 @@ async function initializeDatabase() {
       result TEXT NOT NULL DEFAULT '',
       submitted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+    CREATE TABLE IF NOT EXISTS task_progress_photos (
+      id BIGSERIAL PRIMARY KEY,
+      progress_update_id BIGINT NOT NULL REFERENCES task_progress_updates(id) ON DELETE CASCADE,
+      storage_key TEXT,
+      file_data BYTEA,
+      file_name TEXT NOT NULL,
+      mime_type TEXT NOT NULL CHECK (mime_type IN ('image/jpeg', 'image/png', 'image/webp')),
+      file_size BIGINT NOT NULL CHECK (file_size > 0),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
     CREATE TABLE IF NOT EXISTS documents (
       id BIGSERIAL PRIMARY KEY,
       title TEXT NOT NULL,
@@ -426,6 +436,7 @@ async function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS transactions_date_idx ON transactions(date DESC);
     CREATE INDEX IF NOT EXISTS tasks_assignee_created_idx ON tasks(assignee_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS task_progress_updates_task_idx ON task_progress_updates(task_id, submitted_at DESC);
+    CREATE INDEX IF NOT EXISTS task_progress_photos_update_idx ON task_progress_photos(progress_update_id, created_at);
     CREATE INDEX IF NOT EXISTS documents_created_idx ON documents(created_at DESC);
     CREATE INDEX IF NOT EXISTS audit_logs_created_idx ON audit_logs(created_at DESC);
     CREATE INDEX IF NOT EXISTS inventory_items_category_idx ON inventory_items(category_id, is_active);
@@ -3731,9 +3742,10 @@ app.get('/api/tasks', requireAuth, asyncRoute(async (req, res) => {
     : await pool.query(`
           SELECT t.id, t.title, t.description, t.assignee_id, t.quantity, t.status,
                  t.progress_percent, t.progress_note, t.result, t.created_at, t.updated_at,
-                 u.name AS assignee_name
+                 u.name AS assignee_name, v.name AS verifier_name
           FROM tasks t
           LEFT JOIN users u ON u.id = t.assignee_id
+          LEFT JOIN users v ON v.id = t.verified_by
           WHERE t.assignee_id = $1 AND t.archived_at IS NULL
           ORDER BY t.created_at DESC
       `, [req.session.user.id]);
@@ -3741,64 +3753,152 @@ app.get('/api/tasks', requireAuth, asyncRoute(async (req, res) => {
 }));
 
 app.get('/api/tasks/:id/updates', requireAuth, asyncRoute(async (req, res) => {
-  const taskResult = await pool.query('SELECT assignee_id FROM tasks WHERE id = $1', [req.params.id]);
+  const taskId = Number(req.params.id);
+  if (!Number.isSafeInteger(taskId) || taskId <= 0) {
+    return res.status(400).json({ error: 'ID pekerjaan tidak valid.' });
+  }
+  const taskResult = await pool.query('SELECT assignee_id FROM tasks WHERE id = $1', [taskId]);
   const task = taskResult.rows[0];
   if (!task || (req.session.user.role !== 'DIREKTUR' && String(task.assignee_id) !== String(req.session.user.id))) {
     return res.status(404).json({ error: 'Pekerjaan tidak ditemukan.' });
   }
   const updates = await pool.query(`
-    SELECT p.id, p.progress_percent, p.progress_note, p.result, p.submitted_at, u.name AS user_name
+    SELECT p.id, p.progress_percent, p.progress_note, p.result, p.submitted_at, u.name AS user_name,
+           COALESCE(photo_list.photos, '[]'::JSON) AS photos
     FROM task_progress_updates p
     JOIN users u ON u.id = p.user_id
+    LEFT JOIN LATERAL (
+      SELECT JSON_AGG(JSON_BUILD_OBJECT('id', photo.id, 'file_name', photo.file_name)
+                      ORDER BY photo.created_at, photo.id) AS photos
+      FROM task_progress_photos photo
+      WHERE photo.progress_update_id = p.id
+    ) photo_list ON TRUE
     WHERE p.task_id = $1
     ORDER BY p.submitted_at DESC
     LIMIT 50
-  `, [req.params.id]);
+  `, [taskId]);
   res.json(updates.rows);
 }));
 
-app.post('/api/tasks/:id/progress', requireAuth, asyncRoute(async (req, res) => {
+app.get('/api/tasks/progress-photos/:id/:action', requireAuth, asyncRoute(async (req, res) => {
+  const photoId = Number(req.params.id);
+  const action = req.params.action;
+  if (!Number.isSafeInteger(photoId) || photoId <= 0 || !['preview', 'download'].includes(action)) {
+    return res.status(404).json({ error: 'Foto bukti tidak ditemukan.' });
+  }
+  const result = await pool.query(`
+    SELECT photo.storage_key, photo.file_data, photo.file_name, photo.mime_type, task.assignee_id
+    FROM task_progress_photos photo
+    JOIN task_progress_updates progress ON progress.id = photo.progress_update_id
+    JOIN tasks task ON task.id = progress.task_id
+    WHERE photo.id = $1
+      AND ($2::BOOLEAN OR task.assignee_id = $3)
+  `, [photoId, req.session.user.role === 'DIREKTUR', req.session.user.id]);
+  const photo = result.rows[0];
+  if (!photo) return res.status(404).json({ error: 'Foto bukti tidak ditemukan.' });
+  const download = action === 'download';
+  if (photo.storage_key) {
+    if (!s3 || !bucketName) return res.status(503).json({ error: 'Penyimpanan foto tidak tersedia.' });
+    return res.redirect(await signedFieldPhoto(photo.storage_key, photo.mime_type, download));
+  }
+  return sendStoredFile(res, {
+    data: photo.file_data,
+    name: photo.file_name,
+    mimeType: photo.mime_type
+  }, download ? 'attachment' : 'inline');
+}));
+
+app.post('/api/tasks/:id/progress', requireAuth, fieldPhotoUpload.array('photos', 4), asyncRoute(async (req, res) => {
   const { progress_percent, progress_note, result } = req.body || {};
   const progress = Number(progress_percent);
   const note = String(progress_note || '').trim();
   const outcome = String(result || '').trim();
-  if (!Number.isInteger(progress) || progress < 0 || progress > 100 || !note || note.length > 2000 || outcome.length > 3000) {
-    return res.status(400).json({ error: 'Isi progres 0–100%, uraian progres (maks. 2.000 karakter), dan hasil (maks. 3.000 karakter) dengan benar.' });
+  const taskId = Number(req.params.id);
+  const files = req.files || [];
+  if (!Number.isSafeInteger(taskId) || taskId <= 0 || !Number.isInteger(progress)
+    || progress < 0 || progress > 100 || !note || note.length > 2000 || outcome.length > 3000
+    || files.length < 1 || files.some((file) => !getFieldPhotoMimeType(file))) {
+    return res.status(400).json({ error: 'Isi progres, uraian, dan hasil dengan benar serta lampirkan 1–4 foto bukti JPG, PNG, atau WebP (maks. 1 MB per foto).' });
   }
   if (progress === 100 && !outcome) {
     return res.status(400).json({ error: 'Hasil pekerjaan wajib diisi saat progres mencapai 100%.' });
   }
 
-  const client = await pool.connect();
+  const storedFiles = [];
+  let client;
+  let transactionStarted = false;
+  let committed = false;
   try {
+    for (const file of files) {
+      const mimeType = getFieldPhotoMimeType(file);
+      const fileExtension = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp' }[mimeType];
+      storedFiles.push(await storeUpload({
+        ...file,
+        mimetype: mimeType,
+        originalname: `${path.basename(file.originalname, path.extname(file.originalname)).slice(0, 100)}${fileExtension}`
+      }, 'task-progress'));
+    }
+    client = await pool.connect();
     await client.query('BEGIN');
+    transactionStarted = true;
     const updated = await client.query(`
       UPDATE tasks
       SET progress_percent = $1, progress_note = $2, result = $3,
           status = CASE WHEN $1 = 100 THEN 'in_review' ELSE 'pending' END,
           updated_at = NOW()
-      WHERE id = $4 AND assignee_id = $5 AND status <> 'approved' AND archived_at IS NULL
+      WHERE id = $4 AND assignee_id = $5 AND status NOT IN ('approved', 'in_review') AND archived_at IS NULL
       RETURNING id
-    `, [progress, note, outcome, req.params.id, req.session.user.id]);
+    `, [progress, note, outcome, taskId, req.session.user.id]);
     if (!updated.rows[0]) {
-      await client.query('ROLLBACK');
-      return res.status(404).json({ error: 'Pekerjaan tidak ditemukan atau sudah disetujui.' });
+      const error = new Error('Pekerjaan tidak ditemukan, sedang menunggu pemeriksaan Direktur, atau sudah disetujui.');
+      error.status = 409;
+      throw error;
     }
-    await client.query(`
+    const progressUpdate = await client.query(`
       INSERT INTO task_progress_updates (task_id, user_id, progress_percent, progress_note, result)
       VALUES ($1, $2, $3, $4, $5)
-    `, [req.params.id, req.session.user.id, progress, note, outcome]);
+      RETURNING id
+    `, [taskId, req.session.user.id, progress, note, outcome]);
+    for (let index = 0; index < storedFiles.length; index += 1) {
+      const stored = storedFiles[index];
+      await client.query(`
+        INSERT INTO task_progress_photos (
+          progress_update_id, storage_key, file_data, file_name, mime_type, file_size
+        )
+        VALUES ($1, $2, $3, $4, $5, $6)
+      `, [
+        progressUpdate.rows[0].id, stored.key, stored.data,
+        stored.name, stored.mimeType, files[index].size
+      ]);
+    }
     await client.query(`
       INSERT INTO audit_logs (user_id, action, details, ip_address)
       VALUES ($1, 'TASK_PROGRESS_UPDATED', $2, $3)
-    `, [req.session.user.id, `Updated task #${req.params.id} progress to ${progress}%.`, req.ip || 'unknown']);
+    `, [req.session.user.id, `Updated task #${taskId} progress to ${progress}% with ${storedFiles.length} evidence photo(s).`, req.ip || 'unknown']);
     await client.query('COMMIT');
+    transactionStarted = false;
+    committed = true;
     res.json({ success: true });
   } catch (error) {
-    await client.query('ROLLBACK');
+    if (transactionStarted) {
+      try {
+        await client.query('ROLLBACK');
+      } catch (rollbackError) {
+        console.error('Failed to roll back task progress update:', rollbackError);
+      }
+    }
+    if (!committed) {
+      for (const stored of storedFiles) {
+        try {
+          await removeUpload(stored);
+        } catch (cleanupError) {
+          console.error('Failed to clean up task progress photo after a failed update:', cleanupError);
+        }
+      }
+    }
     throw error;
   } finally {
-    client.release();
+    client?.release();
   }
 }));
 
@@ -3926,12 +4026,16 @@ app.use((error, _req, res, _next) => {
   }
   if (error instanceof multer.MulterError) {
     const fieldPhotoUploadRequest = _req.path.startsWith('/api/field-monitoring/');
+    const taskProgressUploadRequest = /^\/api\/tasks\/\d+\/progress$/.test(_req.path);
     return res.status(error.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({
       error: error.code === 'LIMIT_FILE_SIZE'
         ? fieldPhotoUploadRequest
+          || taskProgressUploadRequest
           ? 'Ukuran foto maksimal 1 MB per file. Kompres foto lalu coba kembali.'
           : 'Ukuran file maksimal 3 MB. Kompres file lalu coba kembali.'
-        : 'Upload file tidak valid.'
+        : taskProgressUploadRequest && error.code === 'LIMIT_FILE_COUNT'
+          ? 'Maksimal 4 foto bukti untuk setiap update pekerjaan.'
+          : 'Upload file tidak valid.'
     });
   }
   res.status(error.status || 500).json({

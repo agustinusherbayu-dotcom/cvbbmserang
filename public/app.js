@@ -123,20 +123,20 @@ function renderSummaryCards(data) {
       { key: 'expense', label: 'Total Pengeluaran', value: data?.summary?.expense ?? 0, format: 'currency' },
       { key: 'transactions', label: 'Total Transaksi', value: data?.summary?.totalTransactions ?? 0, format: 'number' },
       ...(isDirector ? [
-        { key: 'pendingTasks', label: 'Pekerjaan Menunggu Verifikasi', value: data?.summary?.pendingVerification ?? 0, format: 'number' },
+        { key: 'pendingTasks', label: 'Pekerjaan Menunggu Pemeriksaan Direktur', value: data?.summary?.pendingVerification ?? 0, format: 'number' },
         { key: 'approvedTasks', label: 'Pekerjaan Disetujui', value: data?.summary?.approvedTasks ?? 0, format: 'number' },
         { key: 'bonuses', label: 'Total Bonus Karyawan', value: data?.summary?.totalBonus ?? 0, format: 'currency' }
       ] : [
         { key: 'assignedTasks', label: 'Tugas ditugaskan', value: data?.summary?.assignedTasks ?? 0, format: 'number' },
         { key: 'inProgressTasks', label: 'Dalam pengerjaan', value: data?.summary?.inProgressTasks ?? 0, format: 'number' },
-        { key: 'waitingTasks', label: 'Menunggu pemeriksaan', value: data?.summary?.waitingTasks ?? 0, format: 'number' },
+        { key: 'waitingTasks', label: 'Menunggu pemeriksaan Direktur', value: data?.summary?.waitingTasks ?? 0, format: 'number' },
         { key: 'approvedTasks', label: 'Selesai disetujui', value: data?.summary?.approvedTasks ?? 0, format: 'number' }
       ])
     ]
     : [
       { key: 'assignedTasks', label: 'Tugas ditugaskan', value: data?.summary?.assignedTasks ?? 0, format: 'number' },
       { key: 'inProgressTasks', label: 'Dalam pengerjaan', value: data?.summary?.inProgressTasks ?? 0, format: 'number' },
-      { key: 'waitingTasks', label: 'Menunggu pemeriksaan', value: data?.summary?.waitingTasks ?? 0, format: 'number' },
+      { key: 'waitingTasks', label: 'Menunggu pemeriksaan Direktur', value: data?.summary?.waitingTasks ?? 0, format: 'number' },
       { key: 'approvedTasks', label: 'Selesai disetujui', value: data?.summary?.approvedTasks ?? 0, format: 'number' }
     ];
 
@@ -193,7 +193,7 @@ function renderTaskDetails(tasks, key) {
   const rows = filtered.map((task) => {
     const statusLabels = {
       pending: 'Dalam pengerjaan',
-      in_review: 'Menunggu pemeriksaan',
+      in_review: 'Menunggu pemeriksaan Direktur',
       approved: 'Disetujui',
       rejected: 'Perlu perbaikan'
     };
@@ -229,12 +229,12 @@ async function openIndicatorDetails(key) {
     income: 'Total Pemasukan',
     expense: 'Total Pengeluaran',
     transactions: 'Total Transaksi',
-    pendingTasks: 'Pekerjaan Menunggu Verifikasi',
+    pendingTasks: 'Pekerjaan Menunggu Pemeriksaan Direktur',
     approvedTasks: 'Pekerjaan Disetujui',
     bonuses: 'Total Bonus Karyawan',
     assignedTasks: 'Tugas ditugaskan',
     inProgressTasks: 'Dalam pengerjaan',
-    waitingTasks: 'Menunggu pemeriksaan'
+    waitingTasks: 'Menunggu pemeriksaan Direktur'
   };
   title.textContent = labels[key] || 'Rincian indikator';
   content.innerHTML = '<p class="indicator-empty">Memuat rincian...</p>';
@@ -257,7 +257,7 @@ async function openIndicatorDetails(key) {
         <article class="indicator-detail-row">
           <div>
             <strong>${escapeHtml(bonus.title)}</strong>
-            <span>${state.user?.role === 'DIREKTUR' ? `${escapeHtml(bonus.assignee_name || '-')} · ` : ''}${bonus.status === 'approved' ? 'Disetujui' : bonus.status === 'in_review' ? 'Menunggu pemeriksaan' : 'Belum disetujui'}</span>
+            <span>${state.user?.role === 'DIREKTUR' ? `${escapeHtml(bonus.assignee_name || '-')} · ` : ''}${bonus.status === 'approved' ? 'Disetujui' : bonus.status === 'in_review' ? 'Menunggu pemeriksaan Direktur' : 'Belum disetujui'}</span>
           </div>
           <strong>${formatCurrency(bonus.bonus_amount)}</strong>
         </article>
@@ -352,6 +352,7 @@ function renderFinanceTable(transactions) {
 
 function renderTaskTable(tasks) {
   const target = document.getElementById('taskTable');
+  target.querySelectorAll('[data-task-local-photo]').forEach((image) => URL.revokeObjectURL(image.src));
   const canVerify = state.user?.role === 'DIREKTUR';
   const isDirector = canVerify;
   const isEmployee = state.user?.role === 'KARYAWAN';
@@ -361,7 +362,7 @@ function renderTaskTable(tasks) {
     const progress = Math.max(0, Math.min(100, Number(task.progress_percent) || 0));
     const statusLabels = {
       pending: 'Belum selesai',
-      in_review: 'Menunggu pemeriksaan',
+      in_review: 'Menunggu pemeriksaan Direktur',
       approved: 'Disetujui',
       rejected: 'Perlu diperbaiki'
     };
@@ -386,11 +387,17 @@ function renderTaskTable(tasks) {
             <span>Hasil sementara / akhir</span>
             <textarea name="result" rows="2" maxlength="3000" placeholder="Catat hasil pekerjaan yang sudah diperoleh">${escapeHtml(task.result || '')}</textarea>
           </label>
-          <button class="primary-btn small" type="submit">Simpan progres</button>
+          <label>
+            <span>Foto bukti update (wajib, 1–4 foto)</span>
+            <input type="file" name="photos" accept="image/jpeg,image/png,image/webp" capture="environment" multiple required data-task-progress-photos />
+            <small class="field-help">Ambil foto atau pilih dari galeri. Foto dikompres otomatis, maksimal 1 MB per foto.</small>
+          </label>
+          <div class="task-photo-preview" data-task-photo-preview aria-live="polite"></div>
+          <button class="primary-btn small" type="submit">Kirim update pekerjaan</button>
         </form>`
       : '';
     const reviewNote = !canVerify && status === 'in_review'
-      ? '<p class="task-waiting-review">Hasil sudah dikirim untuk diperiksa. Anda dapat memperbarui pekerjaan setelah mendapat keputusan Direktur.</p>'
+      ? '<p class="task-waiting-review">“Menunggu pemeriksaan Direktur” berarti progres 100% beserta hasil dan foto bukti sudah dikirim. Hanya Direktur yang dapat menyetujui hasil atau meminta perbaikan. Update baru dapat dikirim setelah keputusan.</p>'
       : '';
     const directorActions = isDirector ? `
       <div class="inline-actions">
@@ -422,6 +429,7 @@ function renderTaskTable(tasks) {
           <span>Target: <strong>${escapeHtml(task.quantity)}</strong></span>
           ${task.progress_note ? `<span>Update: ${escapeHtml(task.progress_note)}</span>` : '<span>Belum ada catatan progres.</span>'}
           ${task.result ? `<span>Hasil: ${escapeHtml(task.result)}</span>` : ''}
+          ${['approved', 'rejected'].includes(status) && task.verifier_name ? `<span>Keputusan oleh: <strong>${escapeHtml(task.verifier_name)} · Direktur</strong></span>` : ''}
           ${canVerify ? `<span>Bonus tugas: <strong>${formatCurrency(task.bonus_amount ?? 0)}</strong></span>` : ''}
         </div>
         <details class="task-history">
@@ -1083,7 +1091,7 @@ async function apiFetch(url, options = {}) {
   if (!res.ok) {
     const retryAfter = Number(res.headers.get('retry-after') || data.retry_after || 0);
     const message = res.status === 413
-      ? 'Ukuran file atau request terlalu besar. Batas file 3 MB; kompres file lalu coba kembali.'
+      ? data.error || 'Ukuran file atau request terlalu besar. Kompres file lalu coba kembali.'
       : data.error || data.message || 'Request failed';
     const error = new Error(message);
     error.retryAfter = retryAfter;
@@ -2022,6 +2030,11 @@ document.addEventListener('click', async (event) => {
               <div><strong>${Number(update.progress_percent)}%</strong><time>${escapeHtml(new Date(update.submitted_at).toLocaleString('id-ID'))}</time></div>
               <p>${escapeHtml(update.progress_note)}</p>
               ${update.result ? `<p><strong>Hasil:</strong> ${escapeHtml(update.result)}</p>` : ''}
+              <div class="task-history-photos">${(update.photos || []).map((photo) => `
+                <a href="/api/tasks/progress-photos/${Number(photo.id)}/preview" target="_blank" rel="noreferrer">
+                  <img src="/api/tasks/progress-photos/${Number(photo.id)}/preview" loading="lazy" alt="Foto bukti progres ${Number(update.progress_percent)}%" />
+                </a>
+              `).join('')}</div>
               ${state.user?.role === 'DIREKTUR' ? `<small>${escapeHtml(update.user_name)}</small>` : ''}
             </article>
           `).join('')
@@ -2071,6 +2084,35 @@ document.addEventListener('click', async (event) => {
   }
 });
 
+document.addEventListener('change', async (event) => {
+  const photoInput = event.target.closest('[data-task-progress-photos]');
+  if (!photoInput) return;
+  const form = photoInput.closest('[data-progress-form]');
+  const preview = form?.querySelector('[data-task-photo-preview]');
+  if (!form || !preview) return;
+  preview.querySelectorAll('[data-task-local-photo]').forEach((image) => URL.revokeObjectURL(image.src));
+  form._preparedPhotos = [];
+  form._preparedSources = [...photoInput.files];
+  if (!photoInput.files.length) {
+    preview.textContent = '';
+    return;
+  }
+  if (photoInput.files.length > 4) {
+    preview.textContent = 'Maksimal 4 foto bukti untuk setiap update.';
+    return;
+  }
+  preview.textContent = 'Menyiapkan foto bukti...';
+  try {
+    const prepared = await Promise.all([...photoInput.files].map(prepareFieldPhoto));
+    form._preparedPhotos = prepared;
+    preview.innerHTML = prepared.map((photo) => `
+      <img data-task-local-photo src="${URL.createObjectURL(photo.file)}" alt="Pratinjau foto bukti pekerjaan" />
+    `).join('');
+  } catch (error) {
+    preview.textContent = error.message;
+  }
+});
+
 document.addEventListener('submit', async (event) => {
   const progressForm = event.target.closest('[data-progress-form]');
   if (!progressForm) return;
@@ -2078,10 +2120,24 @@ document.addEventListener('submit', async (event) => {
   const submitButton = progressForm.querySelector('button[type="submit"]');
   submitButton.disabled = true;
   try {
-    const values = Object.fromEntries(new FormData(progressForm).entries());
+    const photoInput = progressForm.querySelector('[data-task-progress-photos]');
+    const selectedFiles = [...(photoInput?.files || [])];
+    if (!selectedFiles.length || selectedFiles.length > 4) {
+      throw new Error('Lampirkan 1–4 foto bukti untuk setiap update pekerjaan.');
+    }
+    let prepared = progressForm._preparedPhotos;
+    const sameFiles = progressForm._preparedSources
+      && progressForm._preparedSources.length === selectedFiles.length
+      && progressForm._preparedSources.every((file, index) => file === selectedFiles[index]);
+    if (!sameFiles || !prepared?.length) {
+      prepared = await Promise.all(selectedFiles.map(prepareFieldPhoto));
+    }
+    const formData = new FormData(progressForm);
+    formData.delete('photos');
+    prepared.forEach((photo) => formData.append('photos', photo.file, photo.file.name));
     await apiFetch(`/api/tasks/${progressForm.dataset.taskId}/progress`, {
       method: 'POST',
-      body: JSON.stringify(values)
+      body: formData
     });
     await refreshData();
   } catch (error) {

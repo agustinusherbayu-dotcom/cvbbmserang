@@ -1386,6 +1386,31 @@ select {
   font-size: 0.88rem;
 }
 
+.task-photo-preview,
+.task-history-photos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+}
+
+.task-photo-preview img,
+.task-history-photos img {
+  width: 96px;
+  height: 76px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  object-fit: cover;
+  background: #f3f6f5;
+}
+
+.task-history-photos {
+  margin-top: 10px;
+}
+
+.task-history-photos a {
+  display: block;
+}
+
 .task-verification-actions {
   padding-top: 4px;
 }

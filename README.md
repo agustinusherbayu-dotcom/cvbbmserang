@@ -7,8 +7,9 @@ This project is a responsive internal company management application for BBM. It
 - Secure login with phone number and 6-digit PIN
 - Password hashing with bcryptjs
 - Four roles: Direktur (admin), Manager, Komisaris, and Karyawan
+- Komisaris has read-only access to finance records and cash-flow summaries; only Direktur can create financial transactions
 - Only Direktur/admin can create accounts or change roles; Manager, Komisaris, and Karyawan cannot access user administration
-- Manager, Komisaris, and Karyawan can only access tasks assigned to their own account and their personal bonus summaries; finance, documents, audit, and user administration are Direktur-only
+- Manager, Komisaris, and Karyawan can only access tasks assigned to their own account and their personal bonus summaries; Komisaris can view finance records and cash-flow summaries but cannot create or edit transactions
 - Direktur assigns tasks to active Karyawan accounts; employees submit progress notes and results, with each update retained in task history for review
 - Employee dashboards show personal task counts and progress, without company cash, transaction, or financial summary data
 - Completed tasks are submitted for Direktur review before they can be approved

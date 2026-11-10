@@ -525,7 +525,8 @@ function sendStoredFile(res, file) {
 
 async function getDashboardData(user) {
   const isDirector = user.role === 'DIREKTUR';
-  const transactions = isDirector
+  const canViewFinance = ['DIREKTUR', 'KOMISARIS'].includes(user.role);
+  const transactions = canViewFinance
     ? (await pool.query(`
         SELECT t.id, t.type, t.date, t.category, t.project_name, t.description, t.amount,
                t.payment_method, t.counterparty, t.created_by, t.created_at,
@@ -588,22 +589,26 @@ async function getDashboardData(user) {
     });
   }
 
+  const taskSummary = {
+    assignedTasks: tasks.length,
+    inProgressTasks: tasks.filter((task) => task.status === 'pending' || task.status === 'rejected').length,
+    waitingTasks: tasks.filter((task) => task.status === 'in_review').length,
+    approvedTasks: tasks.filter((task) => task.status === 'approved').length
+  };
+  const financialSummary = {
+    balance: income - expense,
+    income,
+    expense,
+    totalTransactions: transactions.length
+  };
   const summary = isDirector
     ? {
-        balance: income - expense,
-        income,
-        expense,
-        totalTransactions: transactions.length,
+        ...financialSummary,
         pendingVerification: tasks.filter((task) => task.status === 'in_review').length,
         approvedTasks: tasks.filter((task) => task.status === 'approved').length,
         totalBonus: tasks.reduce((sum, task) => sum + Number(task.bonus_amount || 0), 0)
       }
-    : {
-        assignedTasks: tasks.length,
-        inProgressTasks: tasks.filter((task) => task.status === 'pending' || task.status === 'rejected').length,
-        waitingTasks: tasks.filter((task) => task.status === 'in_review').length,
-        approvedTasks: tasks.filter((task) => task.status === 'approved').length
-      };
+    : canViewFinance ? { ...financialSummary, ...taskSummary } : taskSummary;
   const visibleTasks = tasks.slice(0, 12).map((task) => {
     if (isDirector) return task;
     const { bonus_amount, evidence_path, verified_by, verifier_name, ...employeeTask } = task;
@@ -616,7 +621,7 @@ async function getDashboardData(user) {
     transactions: transactions.slice(0, 10),
     tasks: visibleTasks,
     activities,
-    monthlySummary: isDirector ? monthlySummary : [],
+    monthlySummary: canViewFinance ? monthlySummary : [],
     userSummary: {
       completed: tasks.filter((task) => task.status === 'approved').length,
       waiting: tasks.filter((task) => task.status === 'in_review').length,
@@ -2234,7 +2239,7 @@ app.post('/api/tasks/:id/verify', requireAuth, requireRole('DIREKTUR'), asyncRou
   res.json({ success: true });
 }));
 
-app.get('/api/transactions', requireAuth, requireRole('DIREKTUR'), asyncRoute(async (_req, res) => {
+app.get('/api/transactions', requireAuth, requireRole('DIREKTUR', 'KOMISARIS'), asyncRoute(async (_req, res) => {
   const result = await pool.query(`
     SELECT t.id, t.type, t.date, t.category, t.project_name, t.description, t.amount,
            t.payment_method, t.counterparty, t.attachment_path,
@@ -2278,7 +2283,7 @@ app.post('/api/transactions', requireAuth, requireRole('DIREKTUR'), upload.singl
   res.status(201).json({ success: true, id: created.rows[0].id });
 }));
 
-app.get('/api/transactions/:id/attachment', requireAuth, requireRole('DIREKTUR'), asyncRoute(async (req, res) => {
+app.get('/api/transactions/:id/attachment', requireAuth, requireRole('DIREKTUR', 'KOMISARIS'), asyncRoute(async (req, res) => {
   const result = await pool.query(
     'SELECT attachment_path, attachment_data, attachment_name, attachment_mime FROM transactions WHERE id = $1',
     [req.params.id]

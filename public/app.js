@@ -78,6 +78,15 @@ function formatCurrency(value) {
   }).format(Number(value || 0));
 }
 
+function formatCompactCurrency(value) {
+  return new Intl.NumberFormat('id-ID', {
+    style: 'currency',
+    currency: 'IDR',
+    notation: 'compact',
+    maximumFractionDigits: 1
+  }).format(Number(value || 0));
+}
+
 function validateUploadSize(form) {
   const fileInput = form.querySelector('input[type="file"]');
   const file = fileInput?.files?.[0];
@@ -95,18 +104,26 @@ function validateUploadSize(form) {
 function renderSummaryCards(data) {
   const summaryGrid = document.getElementById('summaryGrid');
   const isDirector = state.user?.role === 'DIREKTUR';
-  document.getElementById('companyDashboardContent').classList.toggle('hidden', !isDirector);
-  document.getElementById('employeeDashboardNote').classList.toggle('hidden', isDirector);
+  const canViewFinance = ['DIREKTUR', 'KOMISARIS'].includes(state.user?.role);
+  document.getElementById('companyDashboardContent').classList.toggle('hidden', !canViewFinance);
+  document.getElementById('employeeDashboardNote').classList.toggle('hidden', canViewFinance);
   document.getElementById('directorQuickActions').classList.toggle('hidden', !isDirector);
-  const cards = isDirector
+  const cards = canViewFinance
     ? [
       { key: 'balance', label: 'Total Saldo', value: data?.summary?.balance ?? 0, format: 'currency' },
       { key: 'income', label: 'Total Pemasukan', value: data?.summary?.income ?? 0, format: 'currency' },
       { key: 'expense', label: 'Total Pengeluaran', value: data?.summary?.expense ?? 0, format: 'currency' },
       { key: 'transactions', label: 'Total Transaksi', value: data?.summary?.totalTransactions ?? 0, format: 'number' },
-      { key: 'pendingTasks', label: 'Pekerjaan Menunggu Verifikasi', value: data?.summary?.pendingVerification ?? 0, format: 'number' },
-      { key: 'approvedTasks', label: 'Pekerjaan Disetujui', value: data?.summary?.approvedTasks ?? 0, format: 'number' },
-      { key: 'bonuses', label: 'Total Bonus Karyawan', value: data?.summary?.totalBonus ?? 0, format: 'currency' }
+      ...(isDirector ? [
+        { key: 'pendingTasks', label: 'Pekerjaan Menunggu Verifikasi', value: data?.summary?.pendingVerification ?? 0, format: 'number' },
+        { key: 'approvedTasks', label: 'Pekerjaan Disetujui', value: data?.summary?.approvedTasks ?? 0, format: 'number' },
+        { key: 'bonuses', label: 'Total Bonus Karyawan', value: data?.summary?.totalBonus ?? 0, format: 'currency' }
+      ] : [
+        { key: 'assignedTasks', label: 'Tugas ditugaskan', value: data?.summary?.assignedTasks ?? 0, format: 'number' },
+        { key: 'inProgressTasks', label: 'Dalam pengerjaan', value: data?.summary?.inProgressTasks ?? 0, format: 'number' },
+        { key: 'waitingTasks', label: 'Menunggu pemeriksaan', value: data?.summary?.waitingTasks ?? 0, format: 'number' },
+        { key: 'approvedTasks', label: 'Selesai disetujui', value: data?.summary?.approvedTasks ?? 0, format: 'number' }
+      ])
     ]
     : [
       { key: 'assignedTasks', label: 'Tugas ditugaskan', value: data?.summary?.assignedTasks ?? 0, format: 'number' },
@@ -116,11 +133,11 @@ function renderSummaryCards(data) {
     ];
 
   summaryGrid.innerHTML = cards.map(card => {
-    const value = card.format === 'currency' ? formatCurrency(card.value) : card.value;
+    const value = card.format === 'currency' ? formatCompactCurrency(card.value) : card.value;
     return `
       <button type="button" class="summary-card" data-dashboard-detail="${card.key}" aria-label="Lihat rincian: ${escapeHtml(card.label)}">
         <span class="label">${escapeHtml(card.label)}</span>
-        <p class="value">${value}</p>
+        <p class="value" title="${card.format === 'currency' ? escapeHtml(formatCurrency(card.value)) : ''}">${value}</p>
         <span class="summary-card-hint">Lihat rincian <span aria-hidden="true">→</span></span>
       </button>
     `;
@@ -198,7 +215,7 @@ async function openIndicatorDetails(key) {
   const dialog = document.getElementById('indicatorDialog');
   const title = document.getElementById('indicatorDialogTitle');
   const content = document.getElementById('indicatorDialogContent');
-  const isDirector = state.user?.role === 'DIREKTUR';
+  const canViewFinance = ['DIREKTUR', 'KOMISARIS'].includes(state.user?.role);
   const labels = {
     balance: 'Total Saldo',
     income: 'Total Pemasukan',
@@ -216,7 +233,7 @@ async function openIndicatorDetails(key) {
   dialog.showModal();
 
   try {
-    if (['balance', 'income', 'expense', 'transactions'].includes(key) && isDirector) {
+    if (['balance', 'income', 'expense', 'transactions'].includes(key) && canViewFinance) {
       const transactions = await apiFetch('/api/transactions');
       content.innerHTML = renderTransactionDetails(
         transactions,
@@ -869,7 +886,7 @@ function getAllowedViews(role) {
   const map = {
     DIREKTUR: ['dashboard', 'finance', 'inventory', 'procurement', 'documents', 'bonus', 'tasks', 'users', 'audit'],
     MANAGER: ['dashboard', 'inventory', 'procurement', 'bonus', 'tasks'],
-    KOMISARIS: ['dashboard', 'inventory', 'procurement', 'bonus', 'tasks'],
+    KOMISARIS: ['dashboard', 'finance', 'inventory', 'procurement', 'bonus', 'tasks'],
     KARYAWAN: ['dashboard', 'procurement', 'bonus', 'tasks']
   };
 
@@ -892,6 +909,10 @@ function applyRolePermissions() {
   const transactionForm = document.getElementById('transactionForm');
   const documentForm = document.getElementById('documentForm');
 
+  document.querySelectorAll('[data-finance-write]').forEach((section) => {
+    section.hidden = !isDirector;
+  });
+  document.getElementById('financeReadOnlyNote').hidden = role !== 'KOMISARIS';
   document.querySelectorAll('[data-inventory-write]').forEach((section) => {
     section.hidden = !['DIREKTUR', 'MANAGER'].includes(role);
   });
@@ -902,8 +923,8 @@ function applyRolePermissions() {
     section.hidden = !isDirector;
   });
   document.getElementById('directorQuickActions').classList.toggle('hidden', !isDirector);
-  document.getElementById('companyDashboardContent').classList.toggle('hidden', !isDirector);
-  document.getElementById('employeeDashboardNote').classList.toggle('hidden', isDirector);
+  document.getElementById('companyDashboardContent').classList.toggle('hidden', !['DIREKTUR', 'KOMISARIS'].includes(role));
+  document.getElementById('employeeDashboardNote').classList.toggle('hidden', ['DIREKTUR', 'KOMISARIS'].includes(role));
 
   if (financeView) {
     financeView.style.display = allowed.includes('finance') ? 'block' : 'none';
@@ -911,7 +932,7 @@ function applyRolePermissions() {
 
   if (transactionForm) {
     transactionForm.querySelectorAll('input, select, textarea, button').forEach((element) => {
-      element.disabled = !allowed.includes('finance');
+      element.disabled = !isDirector;
     });
   }
 
@@ -1075,6 +1096,7 @@ async function refreshData() {
         await Promise.all([loadFinance(), loadInventory(), loadProcurement(), loadDocuments(), loadBonus(), loadUsers(), loadAudit(), loadTasks()]);
       } else {
         const tasks = [loadBonus(), loadTasks()];
+        if (getAllowedViews(state.user.role).includes('finance')) tasks.push(loadFinance());
         if (getAllowedViews(state.user.role).includes('inventory')) tasks.push(loadInventory());
         if (getAllowedViews(state.user.role).includes('procurement')) tasks.push(loadProcurement());
         await Promise.all(tasks);

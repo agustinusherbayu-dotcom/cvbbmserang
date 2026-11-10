@@ -8,7 +8,7 @@
     <link rel="icon" type="image/png" href="/images/logo-bbm.png" />
     <link rel="apple-touch-icon" href="/images/logo-bbm.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
-    <link rel="stylesheet" href="/styles.css?v=20261109-procurement" />
+    <link rel="stylesheet" href="/styles.css?v=20261110-commissioner-finance" />
   </head>
   <body>
     <div id="app" class="app-shell">
@@ -174,7 +174,7 @@
                   </div>
                   <div id="recentTransactions" class="list-table"></div>
                 </div>
-                <div class="panel">
+                <div class="panel" data-director-only>
                   <div class="panel-header">
                     <h3>Aktivitas Terbaru</h3>
                   </div>
@@ -185,7 +185,10 @@
           </section>
 
           <section id="financeView" class="view hidden">
-            <div class="panel">
+            <div id="financeReadOnlyNote" class="panel field-help" role="note" hidden>
+              Anda memiliki akses baca saja ke data keuangan. Alur kas dan transaksi hanya dapat dikelola oleh Direktur.
+            </div>
+            <div class="panel" data-finance-write>
               <div class="panel-header">
                 <h3>Input Transaksi</h3>
               </div>

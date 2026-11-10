@@ -53,6 +53,10 @@ const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: MAX_UPLOAD_SIZE_BYTES }
 });
+const fieldPhotoUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 1024 * 1024, files: 4, fields: 16, fieldSize: 8192 }
+});
 
 function asyncRoute(handler) {
   return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
@@ -336,6 +340,79 @@ async function initializeDatabase() {
       note TEXT NOT NULL DEFAULT '',
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+    CREATE TABLE IF NOT EXISTS field_reports (
+      id BIGSERIAL PRIMARY KEY,
+      title TEXT NOT NULL,
+      category TEXT NOT NULL CHECK (category IN (
+        'Kegiatan Produksi', 'Penerimaan Bahan Baku', 'Kondisi Gudang',
+        'Persediaan Barang', 'Pengiriman Barang', 'Perawatan Mesin',
+        'Quality Control', 'Kegiatan Proyek', 'Kondisi Lingkungan',
+        'Dokumentasi Lainnya'
+      )),
+      description TEXT NOT NULL DEFAULT '',
+      location_name TEXT NOT NULL DEFAULT '',
+      location_lat NUMERIC(10, 7),
+      location_lon NUMERIC(10, 7),
+      task_id BIGINT REFERENCES tasks(id) ON DELETE SET NULL,
+      inventory_item_id BIGINT REFERENCES inventory_items(id) ON DELETE SET NULL,
+      warehouse_id BIGINT REFERENCES warehouses(id) ON DELETE SET NULL,
+      purchase_request_id BIGINT REFERENCES purchase_requests(id) ON DELETE SET NULL,
+      uploader_id BIGINT NOT NULL REFERENCES users(id),
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'reviewed', 'needs_revision')),
+      reviewed_by BIGINT REFERENCES users(id),
+      reviewed_at TIMESTAMPTZ,
+      archived_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS field_report_revisions (
+      id BIGSERIAL PRIMARY KEY,
+      report_id BIGINT NOT NULL REFERENCES field_reports(id),
+      revision_number INTEGER NOT NULL CHECK (revision_number > 0),
+      description TEXT NOT NULL DEFAULT '',
+      submitted_by BIGINT NOT NULL REFERENCES users(id),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (report_id, revision_number)
+    );
+    CREATE TABLE IF NOT EXISTS field_report_photos (
+      id BIGSERIAL PRIMARY KEY,
+      report_id BIGINT NOT NULL REFERENCES field_reports(id),
+      revision_id BIGINT REFERENCES field_report_revisions(id),
+      storage_key TEXT,
+      file_data BYTEA,
+      file_name TEXT NOT NULL,
+      mime_type TEXT NOT NULL CHECK (mime_type IN ('image/jpeg', 'image/png', 'image/webp')),
+      file_size INTEGER NOT NULL CHECK (file_size > 0),
+      captured_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CHECK (storage_key IS NOT NULL OR file_data IS NOT NULL)
+    );
+    CREATE TABLE IF NOT EXISTS field_report_reviews (
+      id BIGSERIAL PRIMARY KEY,
+      report_id BIGINT NOT NULL REFERENCES field_reports(id),
+      reviewer_id BIGINT NOT NULL REFERENCES users(id),
+      status TEXT NOT NULL CHECK (status IN ('reviewed', 'needs_revision')),
+      note TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS field_report_changes (
+      id BIGSERIAL PRIMARY KEY,
+      report_id BIGINT NOT NULL REFERENCES field_reports(id),
+      actor_id BIGINT NOT NULL REFERENCES users(id),
+      change_type TEXT NOT NULL,
+      before_data JSONB NOT NULL,
+      after_data JSONB NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS app_notifications (
+      id BIGSERIAL PRIMARY KEY,
+      user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      report_id BIGINT REFERENCES field_reports(id) ON DELETE SET NULL,
+      notification_type TEXT NOT NULL,
+      message TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      read_at TIMESTAMPTZ
+    );
     CREATE TABLE IF NOT EXISTS login_rate_limits (
       ip_address TEXT PRIMARY KEY,
       attempts INTEGER NOT NULL,
@@ -366,6 +443,13 @@ async function initializeDatabase() {
       ON purchase_orders(request_id) WHERE status IN ('pending_approval', 'issued');
     CREATE INDEX IF NOT EXISTS purchase_order_items_order_idx ON purchase_order_items(purchase_order_id);
     CREATE INDEX IF NOT EXISTS purchase_order_approvals_order_idx ON purchase_order_approvals(purchase_order_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS field_reports_uploader_date_idx ON field_reports(uploader_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS field_reports_category_date_idx ON field_reports(category, created_at DESC);
+    CREATE INDEX IF NOT EXISTS field_reports_status_date_idx ON field_reports(status, created_at DESC);
+    CREATE INDEX IF NOT EXISTS field_report_photos_report_idx ON field_report_photos(report_id, created_at);
+    CREATE INDEX IF NOT EXISTS field_report_reviews_report_idx ON field_report_reviews(report_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS field_report_changes_report_idx ON field_report_changes(report_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS app_notifications_user_date_idx ON app_notifications(user_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS login_rate_limits_reset_idx ON login_rate_limits(reset_at);
     CREATE INDEX IF NOT EXISTS app_sessions_expire_idx ON app_sessions(expire);
   `);
@@ -515,18 +599,76 @@ async function signedDownload(key) {
   return getSignedUrl(s3, new GetObjectCommand({ Bucket: bucketName, Key: key }), { expiresIn: 60 });
 }
 
-function sendStoredFile(res, file) {
+async function signedFieldPhoto(key, mimeType, download = false) {
+  return getSignedUrl(s3, new GetObjectCommand({
+    Bucket: bucketName,
+    Key: key,
+    ResponseContentType: mimeType,
+    ResponseContentDisposition: download ? 'attachment' : 'inline'
+  }), { expiresIn: 60 });
+}
+
+function sendStoredFile(res, file, disposition = 'attachment') {
   if (!file?.data) return res.status(404).json({ error: 'File tidak ditemukan.' });
   const safeName = String(file.name || 'download')
     .replace(/[^a-zA-Z0-9._-]/g, '_')
     .slice(-120) || 'download';
   res.set({
     'Content-Type': file.mimeType || 'application/octet-stream',
-    'Content-Disposition': `attachment; filename="${safeName}"`,
+    'Content-Disposition': `${disposition}; filename="${safeName}"`,
     'X-Content-Type-Options': 'nosniff',
     'Cache-Control': 'private, no-store'
   });
   return res.send(file.data);
+}
+
+const FIELD_REPORT_CATEGORIES = [
+  'Kegiatan Produksi',
+  'Penerimaan Bahan Baku',
+  'Kondisi Gudang',
+  'Persediaan Barang',
+  'Pengiriman Barang',
+  'Perawatan Mesin',
+  'Quality Control',
+  'Kegiatan Proyek',
+  'Kondisi Lingkungan',
+  'Dokumentasi Lainnya'
+];
+
+function getFieldPhotoMimeType(file) {
+  const bytes = file?.buffer;
+  if (!bytes || bytes.length < 12) return null;
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg';
+  if (bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png';
+  if (bytes.toString('ascii', 0, 4) === 'RIFF' && bytes.toString('ascii', 8, 12) === 'WEBP') return 'image/webp';
+  return null;
+}
+
+function parseCaptureDate(value) {
+  if (typeof value !== 'string' || !/^\d{4}[-:]\d{2}[-:]\d{2}[ T]\d{2}:\d{2}:\d{2}$/.test(value)) return null;
+  const normalized = value.replace(/^(\d{4}):(\d{2}):(\d{2}) /, '$1-$2-$3T').replace(' ', 'T');
+  const parsed = new Date(normalized);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
+async function createFieldNotifications(client, userIds, reportId, type, message) {
+  const uniqueIds = [...new Set(userIds.map(String))];
+  for (const userId of uniqueIds) {
+    await client.query(`
+      INSERT INTO app_notifications (user_id, report_id, notification_type, message)
+      VALUES ($1, $2, $3, $4)
+    `, [userId, reportId, type, message]);
+  }
+}
+
+async function getFieldReportAccess(client, reportId, user) {
+  const result = await client.query(`
+    SELECT fr.id, fr.uploader_id, fr.archived_at
+    FROM field_reports fr
+    WHERE fr.id = $1 AND ($2::BOOLEAN OR fr.uploader_id = $3)
+      AND (fr.archived_at IS NULL OR $4::BOOLEAN)
+  `, [reportId, user.role !== 'KARYAWAN', user.id, user.role === 'DIREKTUR']);
+  return result.rows[0] || null;
 }
 
 async function getDashboardData(user) {
@@ -2418,6 +2560,680 @@ app.post('/api/procurement/purchase-orders/:id/cancel', requireAuth, requireRole
   res.json({ success: true, status: 'cancelled' });
 }));
 
+app.get('/api/field-monitoring/references', requireAuth, asyncRoute(async (req, res) => {
+  const [tasks, items, warehouses, requests] = await Promise.all([
+    pool.query(`
+      SELECT id, title, status FROM tasks
+      WHERE archived_at IS NULL AND ($1::BOOLEAN OR assignee_id = $2)
+      ORDER BY created_at DESC LIMIT 300
+    `, [req.session.user.role !== 'KARYAWAN', req.session.user.id]),
+    pool.query(`
+      SELECT id, sku, name, base_unit FROM inventory_items
+      WHERE is_active = TRUE ORDER BY name LIMIT 300
+    `),
+    pool.query(`
+      SELECT id, name FROM warehouses WHERE is_active = TRUE ORDER BY name LIMIT 100
+    `),
+    ['DIREKTUR', 'MANAGER'].includes(req.session.user.role)
+      ? pool.query(`
+          SELECT id, request_number, category, status FROM purchase_requests
+          WHERE status <> 'cancelled' ORDER BY created_at DESC LIMIT 200
+        `)
+      : Promise.resolve({ rows: [] })
+  ]);
+  res.json({
+    categories: FIELD_REPORT_CATEGORIES,
+    tasks: tasks.rows,
+    inventoryItems: items.rows,
+    warehouses: warehouses.rows,
+    purchaseRequests: requests.rows
+  });
+}));
+
+app.get('/api/field-monitoring/dashboard', requireAuth, requireRole('DIREKTUR', 'KOMISARIS', 'MANAGER'), asyncRoute(async (_req, res) => {
+  const [totals, categories, employees, recent] = await Promise.all([
+    pool.query(`
+      SELECT COUNT(*) AS total,
+        COUNT(*) FILTER (WHERE created_at >= CURRENT_DATE) AS today,
+        COUNT(*) FILTER (WHERE created_at >= DATE_TRUNC('week', NOW())) AS this_week,
+        COUNT(*) FILTER (WHERE created_at >= DATE_TRUNC('month', NOW())) AS this_month,
+        COUNT(*) FILTER (WHERE status = 'pending') AS pending_review,
+        COUNT(*) FILTER (WHERE status = 'needs_revision') AS needs_revision
+      FROM field_reports WHERE archived_at IS NULL
+    `),
+    pool.query(`
+      SELECT category, COUNT(*) AS count
+      FROM field_reports WHERE archived_at IS NULL
+      GROUP BY category ORDER BY count DESC, category
+    `),
+    pool.query(`
+      SELECT u.id, u.name, COUNT(fr.id) AS count
+      FROM users u LEFT JOIN field_reports fr
+        ON fr.uploader_id = u.id AND fr.archived_at IS NULL
+      WHERE u.role = 'KARYAWAN' AND u.status = 'active'
+      GROUP BY u.id, u.name ORDER BY count DESC, u.name
+    `),
+    pool.query(`
+      SELECT fr.id, fr.title, fr.category, fr.status, fr.created_at,
+             u.name AS uploader_name,
+             (SELECT COUNT(*) FROM field_report_photos p WHERE p.report_id = fr.id) AS photo_count,
+             (SELECT p.id FROM field_report_photos p WHERE p.report_id = fr.id
+              ORDER BY p.created_at, p.id LIMIT 1) AS first_photo_id
+      FROM field_reports fr JOIN users u ON u.id = fr.uploader_id
+      WHERE fr.archived_at IS NULL ORDER BY fr.created_at DESC LIMIT 8
+    `)
+  ]);
+  res.json({
+    totals: totals.rows[0],
+    categories: categories.rows,
+    employees: employees.rows,
+    recent: recent.rows
+  });
+}));
+
+app.get('/api/field-monitoring/reports.csv', requireAuth, requireRole('DIREKTUR', 'KOMISARIS'), asyncRoute(async (req, res) => {
+  const { category, from, to, year, month, uploader, location } = req.query;
+  if ((category && !FIELD_REPORT_CATEGORIES.includes(String(category)))
+    || (from && !isValidIsoDate(from)) || (to && !isValidIsoDate(to))
+    || (year && !/^\d{4}$/.test(String(year)))
+    || (month && (!/^\d{1,2}$/.test(String(month)) || Number(month) < 1 || Number(month) > 12))
+    || (uploader && (!/^\d+$/.test(String(uploader)) || !Number.isSafeInteger(Number(uploader))))) {
+    return res.status(400).json({ error: 'Filter laporan dokumentasi tidak valid.' });
+  }
+  const result = await pool.query(`
+    SELECT fr.id, fr.title, fr.category, fr.description, fr.location_name, fr.created_at,
+           fr.status, u.name AS uploader_name, reviewer.name AS reviewer_name,
+           fr.reviewed_at,
+           COALESCE(photos.photo_ids, '') AS photo_ids
+    FROM field_reports fr
+    JOIN users u ON u.id = fr.uploader_id
+    LEFT JOIN users reviewer ON reviewer.id = fr.reviewed_by
+    LEFT JOIN tasks t ON t.id = fr.task_id
+    LEFT JOIN inventory_items i ON i.id = fr.inventory_item_id
+    LEFT JOIN warehouses w ON w.id = fr.warehouse_id
+    LEFT JOIN purchase_requests pr ON pr.id = fr.purchase_request_id
+    LEFT JOIN LATERAL (
+      SELECT STRING_AGG(p.id::TEXT, ';' ORDER BY p.created_at) AS photo_ids
+      FROM field_report_photos p WHERE p.report_id = fr.id
+    ) photos ON TRUE
+    WHERE fr.archived_at IS NULL
+      AND ($1::TEXT IS NULL OR fr.category = $1)
+      AND ($2::DATE IS NULL OR fr.created_at::DATE >= $2)
+      AND ($3::DATE IS NULL OR fr.created_at::DATE <= $3)
+      AND ($4::INTEGER IS NULL OR EXTRACT(YEAR FROM fr.created_at) = $4)
+      AND ($5::INTEGER IS NULL OR EXTRACT(MONTH FROM fr.created_at) = $5)
+      AND ($6::BIGINT IS NULL OR fr.uploader_id = $6)
+      AND ($7::TEXT IS NULL OR fr.location_name ILIKE '%' || $7 || '%' OR t.title ILIKE '%' || $7 || '%'
+        OR i.name ILIKE '%' || $7 || '%' OR w.name ILIKE '%' || $7 || '%'
+        OR pr.request_number ILIKE '%' || $7 || '%')
+    ORDER BY fr.created_at DESC
+  `, [
+    category || null, from || null, to || null, year ? Number(year) : null,
+    month ? Number(month) : null, uploader || null,
+    location ? String(location).slice(0, 100) : null
+  ]);
+  const quote = (value) => {
+    let text = String(value ?? '');
+    if (/^[=+\-@]/.test(text)) text = `'${text}`;
+    return `"${text.replace(/"/g, '""')}"`;
+  };
+  const lines = [
+    ['Judul', 'Kategori', 'Karyawan', 'Upload', 'Lokasi', 'Keterangan', 'Status', 'Pemeriksa', 'Waktu pemeriksaan', 'ID Foto'].map(quote).join(','),
+    ...result.rows.map((row) => [
+      row.title, row.category, row.uploader_name, new Date(row.created_at).toISOString(),
+      row.location_name, row.description, row.status, row.reviewer_name || '',
+      row.reviewed_at ? new Date(row.reviewed_at).toISOString() : '',
+      row.photo_ids ? row.photo_ids.split(';').map((id) => `/api/field-monitoring/photos/${id}/download`).join('; ') : ''
+    ].map(quote).join(','))
+  ];
+  res.set({
+    'Content-Type': 'text/csv; charset=utf-8',
+    'Content-Disposition': 'attachment; filename="bbm-field-monitoring-report.csv"',
+    'Cache-Control': 'private, no-store'
+  });
+  res.send(`\uFEFF${lines.join('\r\n')}`);
+}));
+
+app.get('/api/field-monitoring/reports', requireAuth, asyncRoute(async (req, res) => {
+  const { category, from, to, year, month, uploader, location, status, history } = req.query;
+  const isDirector = req.session.user.role === 'DIREKTUR';
+  if (history === '1' && !isDirector) {
+    return res.status(403).json({ error: 'Riwayat arsip hanya dapat dilihat Direktur.' });
+  }
+  if (category && !FIELD_REPORT_CATEGORIES.includes(String(category))) {
+    return res.status(400).json({ error: 'Kategori dokumentasi tidak valid.' });
+  }
+  if ((from && !isValidIsoDate(from)) || (to && !isValidIsoDate(to))
+    || (year && !/^\d{4}$/.test(String(year)))
+    || (month && (!/^\d{1,2}$/.test(String(month)) || Number(month) < 1 || Number(month) > 12))
+    || (uploader && (!/^\d+$/.test(String(uploader)) || !Number.isSafeInteger(Number(uploader))))
+    || (status && !['pending', 'reviewed', 'needs_revision'].includes(String(status)))) {
+    return res.status(400).json({ error: 'Filter dokumentasi tidak valid.' });
+  }
+  const allReports = req.session.user.role !== 'KARYAWAN';
+  const includeArchived = history === '1' && isDirector;
+  const result = await pool.query(`
+    SELECT fr.id, fr.uploader_id, fr.title, fr.category, fr.description, fr.location_name,
+           fr.location_lat::TEXT AS location_lat, fr.location_lon::TEXT AS location_lon,
+           fr.task_id, fr.inventory_item_id, fr.warehouse_id, fr.purchase_request_id,
+           fr.status, fr.reviewed_by, fr.reviewed_at, fr.archived_at,
+           fr.created_at, fr.updated_at,
+           u.name AS uploader_name, reviewer.name AS reviewer_name,
+           t.title AS task_title, i.name AS inventory_item_name, w.name AS warehouse_name,
+           pr.request_number,
+           COALESCE(photo_list.photos, '[]'::JSON) AS photos,
+           COALESCE(review_list.reviews, '[]'::JSON) AS reviews,
+           COALESCE(revision_list.revisions, '[]'::JSON) AS revisions,
+           COALESCE(change_list.changes, '[]'::JSON) AS changes
+    FROM field_reports fr
+    JOIN users u ON u.id = fr.uploader_id
+    LEFT JOIN users reviewer ON reviewer.id = fr.reviewed_by
+    LEFT JOIN tasks t ON t.id = fr.task_id
+    LEFT JOIN inventory_items i ON i.id = fr.inventory_item_id
+    LEFT JOIN warehouses w ON w.id = fr.warehouse_id
+    LEFT JOIN purchase_requests pr ON pr.id = fr.purchase_request_id
+    LEFT JOIN LATERAL (
+      SELECT JSON_AGG(JSON_BUILD_OBJECT(
+        'id', p.id, 'file_name', p.file_name, 'mime_type', p.mime_type,
+        'file_size', p.file_size, 'captured_at', p.captured_at,
+        'created_at', p.created_at, 'revision_id', p.revision_id
+      ) ORDER BY p.created_at, p.id) AS photos
+      FROM field_report_photos p WHERE p.report_id = fr.id
+    ) photo_list ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT JSON_AGG(JSON_BUILD_OBJECT(
+        'id', r.id, 'status', r.status, 'note', r.note,
+        'reviewer_name', ru.name, 'created_at', r.created_at
+      ) ORDER BY r.created_at DESC, r.id DESC) AS reviews
+      FROM field_report_reviews r JOIN users ru ON ru.id = r.reviewer_id
+      WHERE r.report_id = fr.id
+    ) review_list ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT JSON_AGG(JSON_BUILD_OBJECT(
+        'id', rev.id, 'revision_number', rev.revision_number,
+        'description', rev.description, 'submitted_by', rev.submitted_by,
+        'created_at', rev.created_at
+      ) ORDER BY rev.revision_number DESC) AS revisions
+      FROM field_report_revisions rev WHERE rev.report_id = fr.id
+    ) revision_list ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT JSON_AGG(JSON_BUILD_OBJECT(
+        'id', chg.id, 'change_type', chg.change_type,
+        'before_data', chg.before_data, 'after_data', chg.after_data,
+        'actor_name', actor.name, 'created_at', chg.created_at
+      ) ORDER BY chg.created_at DESC, chg.id DESC) AS changes
+      FROM field_report_changes chg JOIN users actor ON actor.id = chg.actor_id
+      WHERE chg.report_id = fr.id
+    ) change_list ON TRUE
+    WHERE ($1::BOOLEAN OR fr.uploader_id = $2)
+      AND (fr.archived_at IS NULL OR $3::BOOLEAN)
+      AND ($4::TEXT IS NULL OR fr.category = $4)
+      AND ($5::DATE IS NULL OR fr.created_at::DATE >= $5)
+      AND ($6::DATE IS NULL OR fr.created_at::DATE <= $6)
+      AND ($7::INTEGER IS NULL OR EXTRACT(YEAR FROM fr.created_at) = $7)
+      AND ($8::INTEGER IS NULL OR EXTRACT(MONTH FROM fr.created_at) = $8)
+      AND ($9::BIGINT IS NULL OR fr.uploader_id = $9)
+      AND ($10::TEXT IS NULL OR fr.status = $10)
+      AND ($11::TEXT IS NULL OR fr.location_name ILIKE '%' || $11 || '%' OR t.title ILIKE '%' || $11 || '%'
+        OR i.name ILIKE '%' || $11 || '%' OR w.name ILIKE '%' || $11 || '%'
+        OR pr.request_number ILIKE '%' || $11 || '%')
+    ORDER BY fr.created_at DESC LIMIT 500
+  `, [
+    allReports, req.session.user.id, includeArchived,
+    category || null, from || null, to || null,
+    year ? Number(year) : null, month ? Number(month) : null,
+    allReports && uploader ? uploader : null, status || null,
+    location ? String(location).slice(0, 100) : null
+  ]);
+  res.json(result.rows);
+}));
+
+app.get('/api/field-monitoring/notifications', requireAuth, asyncRoute(async (req, res) => {
+  const result = await pool.query(`
+    SELECT n.id, n.report_id, n.notification_type, n.message, n.created_at, n.read_at,
+           fr.title AS report_title
+    FROM app_notifications n
+    LEFT JOIN field_reports fr ON fr.id = n.report_id
+    WHERE n.user_id = $1
+    ORDER BY n.created_at DESC LIMIT 30
+  `, [req.session.user.id]);
+  res.json(result.rows);
+}));
+
+app.post('/api/field-monitoring/notifications/:id/read', requireAuth, asyncRoute(async (req, res) => {
+  const result = await pool.query(`
+    UPDATE app_notifications SET read_at = NOW()
+    WHERE id = $1 AND user_id = $2 AND read_at IS NULL
+    RETURNING id
+  `, [req.params.id, req.session.user.id]);
+  if (!result.rowCount) return res.status(404).json({ error: 'Notifikasi tidak ditemukan atau sudah dibaca.' });
+  res.json({ success: true });
+}));
+
+app.post('/api/field-monitoring/reports', requireAuth, requireRole('KARYAWAN', 'DIREKTUR'), fieldPhotoUpload.array('photos', 4), asyncRoute(async (req, res) => {
+  const title = String(req.body?.title || '').trim();
+  const category = String(req.body?.category || '');
+  const description = String(req.body?.description || '').trim();
+  const locationName = String(req.body?.location_name || '').trim();
+  const latitude = req.body?.latitude ? String(req.body.latitude) : null;
+  const longitude = req.body?.longitude ? String(req.body.longitude) : null;
+  const taskId = req.body?.task_id ? Number(req.body.task_id) : null;
+  const inventoryItemId = req.body?.inventory_item_id ? Number(req.body.inventory_item_id) : null;
+  const warehouseId = req.body?.warehouse_id ? Number(req.body.warehouse_id) : null;
+  const purchaseRequestId = req.body?.purchase_request_id ? Number(req.body.purchase_request_id) : null;
+  const files = req.files || [];
+  if (title.length < 3 || title.length > 160 || !FIELD_REPORT_CATEGORIES.includes(category)
+    || description.length > 2000 || locationName.length > 200 || files.length < 1
+    || files.some((file) => !getFieldPhotoMimeType(file))
+    || (latitude === null) !== (longitude === null)
+    || (latitude !== null && (!Number.isFinite(Number(latitude)) || Number(latitude) < -90 || Number(latitude) > 90
+      || !Number.isFinite(Number(longitude)) || Number(longitude) < -180 || Number(longitude) > 180))
+    || (req.session.user.role === 'KARYAWAN' && purchaseRequestId !== null)
+    || [taskId, inventoryItemId, warehouseId, purchaseRequestId].some((id) => id !== null && (!Number.isSafeInteger(id) || id <= 0))) {
+    return res.status(400).json({ error: 'Judul, kategori, foto, lokasi, atau referensi dokumentasi tidak valid.' });
+  }
+  const capturedDates = (() => {
+    try {
+      const values = JSON.parse(String(req.body?.photo_captured_at || '[]'));
+      return Array.isArray(values) ? files.map((_, index) => parseCaptureDate(values[index])) : files.map(() => null);
+    } catch {
+      return files.map(() => null);
+    }
+  })();
+  const storedFiles = [];
+  let created;
+  try {
+    for (const file of files) {
+      const mimeType = getFieldPhotoMimeType(file);
+      const fileExtension = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp' }[mimeType];
+      storedFiles.push(await storeUpload({
+        ...file,
+        mimetype: mimeType,
+        originalname: `${path.basename(file.originalname, path.extname(file.originalname)).slice(0, 100)}${fileExtension}`
+      }, 'field-monitoring'));
+    }
+    created = await withInventoryAudit(
+      req.session.user.id,
+      'FIELD_REPORT_CREATED',
+      (row) => `Uploaded field report #${row.id}: ${title}.`,
+      req.ip,
+      async (client) => {
+        if (taskId) {
+          const task = await client.query(`
+            SELECT id FROM tasks WHERE id = $1 AND archived_at IS NULL
+              AND ($2::BOOLEAN OR assignee_id = $3)
+          `, [taskId, req.session.user.role !== 'KARYAWAN', req.session.user.id]);
+          if (!task.rowCount) {
+            const error = new Error('Pekerjaan tidak ditemukan atau bukan tugas Anda.');
+            error.status = 400;
+            throw error;
+          }
+        }
+        if (inventoryItemId) {
+          const item = await client.query('SELECT id FROM inventory_items WHERE id = $1 AND is_active = TRUE', [inventoryItemId]);
+          if (!item.rowCount) {
+            const error = new Error('Item inventory tidak ditemukan atau tidak aktif.');
+            error.status = 400;
+            throw error;
+          }
+        }
+        if (warehouseId) {
+          const warehouse = await client.query('SELECT id FROM warehouses WHERE id = $1 AND is_active = TRUE', [warehouseId]);
+          if (!warehouse.rowCount) {
+            const error = new Error('Gudang tidak ditemukan atau tidak aktif.');
+            error.status = 400;
+            throw error;
+          }
+        }
+        if (purchaseRequestId) {
+          const request = await client.query('SELECT id FROM purchase_requests WHERE id = $1 AND status <> $2', [purchaseRequestId, 'cancelled']);
+          if (!request.rowCount) {
+            const error = new Error('Purchase Request tidak ditemukan atau sudah dibatalkan.');
+            error.status = 400;
+            throw error;
+          }
+        }
+        const report = await client.query(`
+          INSERT INTO field_reports (
+            title, category, description, location_name, location_lat, location_lon,
+            task_id, inventory_item_id, warehouse_id, purchase_request_id, uploader_id
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+          RETURNING id
+        `, [
+          title, category, description, locationName, latitude, longitude,
+          taskId, inventoryItemId, warehouseId, purchaseRequestId, req.session.user.id
+        ]);
+        const revision = await client.query(`
+          INSERT INTO field_report_revisions (report_id, revision_number, description, submitted_by)
+          VALUES ($1, 1, $2, $3) RETURNING id
+        `, [report.rows[0].id, description, req.session.user.id]);
+        for (let index = 0; index < storedFiles.length; index += 1) {
+          const stored = storedFiles[index];
+          await client.query(`
+            INSERT INTO field_report_photos (
+              report_id, revision_id, storage_key, file_data, file_name,
+              mime_type, file_size, captured_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+          `, [
+            report.rows[0].id, revision.rows[0].id,
+            stored.key, stored.data, stored.name, stored.mimeType,
+            files[index].size, capturedDates[index]
+          ]);
+        }
+        const recipients = await client.query(`
+          SELECT id FROM users WHERE role IN ('DIREKTUR', 'KOMISARIS', 'MANAGER')
+            AND status = 'active' AND id <> $1
+        `, [req.session.user.id]);
+        await createFieldNotifications(
+          client, recipients.rows.map((user) => user.id), report.rows[0].id,
+          'field_report_submitted', `${req.session.user.name} mengunggah dokumentasi lapangan baru: ${title}.`
+        );
+        return report;
+      }
+    );
+  } catch (error) {
+    await Promise.all(storedFiles.map((file) => removeUpload(file)));
+    throw error;
+  }
+  res.status(201).json({ success: true, id: created.rows[0].id, status: 'pending' });
+}));
+
+app.post('/api/field-monitoring/reports/:id/revisions', requireAuth, requireRole('KARYAWAN'), fieldPhotoUpload.array('photos', 4), asyncRoute(async (req, res) => {
+  const reportId = Number(req.params.id);
+  const description = String(req.body?.description || '').trim();
+  const files = req.files || [];
+  if (!Number.isSafeInteger(reportId) || reportId <= 0 || description.length > 2000
+    || files.length < 1 || files.some((file) => !getFieldPhotoMimeType(file))) {
+    return res.status(400).json({ error: 'Foto perbaikan dan keterangan yang valid wajib diisi.' });
+  }
+  const capturedDates = (() => {
+    try {
+      const values = JSON.parse(String(req.body?.photo_captured_at || '[]'));
+      return Array.isArray(values) ? files.map((_, index) => parseCaptureDate(values[index])) : files.map(() => null);
+    } catch {
+      return files.map(() => null);
+    }
+  })();
+  const storedFiles = [];
+  let revised;
+  try {
+    for (const file of files) {
+      const mimeType = getFieldPhotoMimeType(file);
+      const fileExtension = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp' }[mimeType];
+      storedFiles.push(await storeUpload({
+        ...file,
+        mimetype: mimeType,
+        originalname: `${path.basename(file.originalname, path.extname(file.originalname)).slice(0, 100)}${fileExtension}`
+      }, 'field-monitoring'));
+    }
+    revised = await withInventoryAudit(
+      req.session.user.id,
+      'FIELD_REPORT_REVISION_SUBMITTED',
+      (row) => `Submitted revision ${row.revision_number} for field report #${reportId}.`,
+      req.ip,
+      async (client) => {
+        const report = await client.query(`
+          SELECT id, status, title FROM field_reports
+          WHERE id = $1 AND uploader_id = $2 AND archived_at IS NULL FOR UPDATE
+        `, [reportId, req.session.user.id]);
+        if (!report.rowCount || report.rows[0].status !== 'needs_revision') {
+          const error = new Error('Dokumentasi tidak ditemukan atau tidak sedang menunggu perbaikan.');
+          error.status = report.rowCount ? 409 : 404;
+          throw error;
+        }
+        const nextNumber = await client.query(`
+          SELECT COALESCE(MAX(revision_number), 0) + 1 AS revision_number
+          FROM field_report_revisions WHERE report_id = $1
+        `, [reportId]);
+        const revisionNumber = Number(nextNumber.rows[0].revision_number);
+        const revision = await client.query(`
+          INSERT INTO field_report_revisions (report_id, revision_number, description, submitted_by)
+          VALUES ($1, $2, $3, $4) RETURNING id
+        `, [reportId, revisionNumber, description, req.session.user.id]);
+        for (let index = 0; index < storedFiles.length; index += 1) {
+          const stored = storedFiles[index];
+          await client.query(`
+            INSERT INTO field_report_photos (
+              report_id, revision_id, storage_key, file_data, file_name,
+              mime_type, file_size, captured_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+          `, [
+            reportId, revision.rows[0].id, stored.key, stored.data,
+            stored.name, stored.mimeType, files[index].size, capturedDates[index]
+          ]);
+        }
+        await client.query(`
+          UPDATE field_reports
+          SET description = $1, status = 'pending', reviewed_by = NULL,
+              reviewed_at = NULL, updated_at = NOW()
+          WHERE id = $2
+        `, [description, reportId]);
+        const recipients = await client.query(`
+          SELECT id FROM users WHERE role IN ('DIREKTUR', 'MANAGER')
+            AND status = 'active' AND id <> $1
+        `, [req.session.user.id]);
+        await createFieldNotifications(
+          client, recipients.rows.map((user) => user.id), reportId,
+          'field_report_revision', `${req.session.user.name} mengirim perbaikan dokumentasi: ${report.rows[0].title}.`
+        );
+        return { rows: [{ revision_number: revisionNumber }] };
+      }
+    );
+  } catch (error) {
+    await Promise.all(storedFiles.map((file) => removeUpload(file)));
+    throw error;
+  }
+  res.json({ success: true, status: 'pending', revision: revised.rows[0].revision_number });
+}));
+
+app.patch('/api/field-monitoring/reports/:id/review', requireAuth, requireRole('MANAGER'), asyncRoute(async (req, res) => {
+  const reportId = Number(req.params.id);
+  const status = String(req.body?.status || '');
+  const note = String(req.body?.note || '').trim();
+  if (!Number.isSafeInteger(reportId) || reportId <= 0
+    || !['reviewed', 'needs_revision'].includes(status)
+    || note.length > 2000 || (status === 'needs_revision' && note.length < 3)) {
+    return res.status(400).json({ error: 'Status pemeriksaan tidak valid. Catatan perbaikan minimal 3 karakter.' });
+  }
+  await withInventoryAudit(
+    req.session.user.id,
+    status === 'reviewed' ? 'FIELD_REPORT_REVIEWED' : 'FIELD_REPORT_REVISION_REQUESTED',
+    `Set field report #${reportId} to ${status}.`,
+    req.ip,
+    async (client) => {
+      const report = await client.query(`
+        SELECT id, uploader_id, title, status FROM field_reports
+        WHERE id = $1 AND archived_at IS NULL FOR UPDATE
+      `, [reportId]);
+      if (!report.rowCount || report.rows[0].status !== 'pending') {
+        const error = new Error(report.rowCount
+          ? 'Dokumentasi ini sudah diperiksa; tunggu pengiriman perbaikan baru sebelum memeriksa kembali.'
+          : 'Dokumentasi tidak ditemukan atau sudah diarsipkan.');
+        error.status = report.rowCount ? 409 : 404;
+        throw error;
+      }
+      await client.query(`
+        UPDATE field_reports
+        SET status = $1, reviewed_by = $2, reviewed_at = NOW(), updated_at = NOW()
+        WHERE id = $3
+      `, [status, req.session.user.id, reportId]);
+      await client.query(`
+        INSERT INTO field_report_reviews (report_id, reviewer_id, status, note)
+        VALUES ($1, $2, $3, $4)
+      `, [reportId, req.session.user.id, status, note]);
+      await createFieldNotifications(
+        client, [report.rows[0].uploader_id], reportId,
+        status === 'reviewed' ? 'field_report_reviewed' : 'field_report_needs_revision',
+        status === 'reviewed'
+          ? `Dokumentasi "${report.rows[0].title}" sudah diperiksa.`
+          : `Dokumentasi "${report.rows[0].title}" perlu diperbaiki: ${note}`
+      );
+    }
+  );
+  res.json({ success: true, status });
+}));
+
+app.patch('/api/field-monitoring/reports/:id', requireAuth, asyncRoute(async (req, res) => {
+  const reportId = Number(req.params.id);
+  const title = String(req.body?.title || '').trim();
+  const category = String(req.body?.category || '');
+  const description = String(req.body?.description || '').trim();
+  const locationName = String(req.body?.location_name || '').trim();
+  if (!Number.isSafeInteger(reportId) || reportId <= 0
+    || title.length < 3 || title.length > 160 || !FIELD_REPORT_CATEGORIES.includes(category)
+    || description.length > 2000 || locationName.length > 200) {
+    return res.status(400).json({ error: 'Metadata dokumentasi tidak valid.' });
+  }
+  const isDirector = req.session.user.role === 'DIREKTUR';
+  if (!isDirector && req.session.user.role !== 'KARYAWAN') {
+    return res.status(403).json({ error: 'Akses ditolak untuk role ini.' });
+  }
+  await withInventoryAudit(
+    req.session.user.id,
+    'FIELD_REPORT_METADATA_UPDATED',
+    `Updated metadata for field report #${reportId}.`,
+    req.ip,
+    async (client) => {
+      const report = await client.query(`
+        SELECT id, title, category, description, location_name
+        FROM field_reports
+        WHERE id = $1 AND archived_at IS NULL
+          AND ($2::BOOLEAN OR (uploader_id = $3 AND status = 'needs_revision'))
+        FOR UPDATE
+      `, [reportId, isDirector, req.session.user.id]);
+      if (!report.rowCount) {
+        const error = new Error('Dokumentasi tidak ditemukan atau Anda tidak dapat mengubahnya saat ini.');
+        error.status = 404;
+        throw error;
+      }
+      const beforeData = {
+        title: report.rows[0].title,
+        category: report.rows[0].category,
+        description: report.rows[0].description,
+        location_name: report.rows[0].location_name
+      };
+      const afterData = { title, category, description, location_name: locationName };
+      await client.query(`
+        UPDATE field_reports
+        SET title = $1, category = $2, description = $3, location_name = $4, updated_at = NOW()
+        WHERE id = $5
+      `, [title, category, description, locationName, reportId]);
+      await client.query(`
+        INSERT INTO field_report_changes (report_id, actor_id, change_type, before_data, after_data)
+        VALUES ($1, $2, 'metadata_updated', $3::JSONB, $4::JSONB)
+      `, [reportId, req.session.user.id, JSON.stringify(beforeData), JSON.stringify(afterData)]);
+      return { rows: [{ id: reportId }] };
+    }
+  );
+  res.json({ success: true });
+}));
+
+app.post('/api/field-monitoring/reports/:id/archive', requireAuth, requireRole('DIREKTUR'), asyncRoute(async (req, res) => {
+  const reportId = Number(req.params.id);
+  if (!Number.isSafeInteger(reportId) || reportId <= 0) {
+    return res.status(400).json({ error: 'ID dokumentasi tidak valid.' });
+  }
+  await withInventoryAudit(
+    req.session.user.id,
+    'FIELD_REPORT_ARCHIVED',
+    `Archived field report #${reportId}.`,
+    req.ip,
+    async (client) => {
+      const archived = await client.query(`
+        UPDATE field_reports SET archived_at = NOW(), updated_at = NOW()
+        WHERE id = $1 AND archived_at IS NULL RETURNING id
+      `, [reportId]);
+      if (!archived.rowCount) {
+        const error = new Error('Dokumentasi tidak ditemukan atau sudah diarsipkan.');
+        error.status = 404;
+        throw error;
+      }
+      return archived;
+    }
+  );
+  res.json({ success: true });
+}));
+
+app.post('/api/field-monitoring/reports/:id/restore', requireAuth, requireRole('DIREKTUR'), asyncRoute(async (req, res) => {
+  const reportId = Number(req.params.id);
+  if (!Number.isSafeInteger(reportId) || reportId <= 0) {
+    return res.status(400).json({ error: 'ID dokumentasi tidak valid.' });
+  }
+  await withInventoryAudit(
+    req.session.user.id,
+    'FIELD_REPORT_RESTORED',
+    `Restored field report #${reportId}.`,
+    req.ip,
+    async (client) => {
+      const restored = await client.query(`
+        UPDATE field_reports SET archived_at = NULL, updated_at = NOW()
+        WHERE id = $1 AND archived_at IS NOT NULL RETURNING id
+      `, [reportId]);
+      if (!restored.rowCount) {
+        const error = new Error('Dokumentasi tidak ditemukan atau sudah aktif.');
+        error.status = 404;
+        throw error;
+      }
+      return restored;
+    }
+  );
+  res.json({ success: true });
+}));
+
+app.get('/api/field-monitoring/photos/:id/:action', requireAuth, asyncRoute(async (req, res) => {
+  const photoId = Number(req.params.id);
+  const download = req.params.action === 'download';
+  if (!Number.isSafeInteger(photoId) || photoId <= 0 || !['preview', 'download'].includes(req.params.action)) {
+    return res.status(400).json({ error: 'Foto tidak valid.' });
+  }
+  const result = await pool.query(`
+    SELECT p.storage_key, p.file_data, p.file_name, p.mime_type, fr.id AS report_id,
+           fr.uploader_id, fr.archived_at
+    FROM field_report_photos p JOIN field_reports fr ON fr.id = p.report_id
+    WHERE p.id = $1 AND (fr.archived_at IS NULL OR $2::BOOLEAN)
+      AND ($3::BOOLEAN OR fr.uploader_id = $4)
+  `, [
+    photoId, req.session.user.role === 'DIREKTUR',
+    req.session.user.role !== 'KARYAWAN', req.session.user.id
+  ]);
+  const photo = result.rows[0];
+  if (!photo) return res.status(404).json({ error: 'Foto tidak ditemukan.' });
+  if (photo.storage_key) {
+    if (!s3 || !bucketName) return res.status(503).json({ error: 'Penyimpanan foto tidak tersedia.' });
+    return res.redirect(await signedFieldPhoto(photo.storage_key, photo.mime_type, download));
+  }
+  return sendStoredFile(res, {
+    data: photo.file_data,
+    name: photo.file_name,
+    mimeType: photo.mime_type
+  }, download ? 'attachment' : 'inline');
+}));
+
+app.get('/api/field-monitoring/reports/:id/history', requireAuth, asyncRoute(async (req, res) => {
+  const reportId = Number(req.params.id);
+  if (!Number.isSafeInteger(reportId) || reportId <= 0) {
+    return res.status(400).json({ error: 'ID dokumentasi tidak valid.' });
+  }
+  const access = await getFieldReportAccess(pool, reportId, req.session.user);
+  if (!access) return res.status(404).json({ error: 'Dokumentasi tidak ditemukan.' });
+  const [reviews, revisions] = await Promise.all([
+    pool.query(`
+      SELECT r.id, r.status, r.note, r.created_at, u.name AS reviewer_name
+      FROM field_report_reviews r JOIN users u ON u.id = r.reviewer_id
+      WHERE r.report_id = $1 ORDER BY r.created_at DESC, r.id DESC
+    `, [reportId]),
+    pool.query(`
+      SELECT rev.id, rev.revision_number, rev.description, rev.created_at, u.name AS submitted_by_name
+      FROM field_report_revisions rev JOIN users u ON u.id = rev.submitted_by
+      WHERE rev.report_id = $1 ORDER BY rev.revision_number DESC
+    `, [reportId])
+  ]);
+  res.json({ reviews: reviews.rows, revisions: revisions.rows });
+}));
+
 app.get('/api/documents', requireAuth, requireRole('DIREKTUR'), asyncRoute(async (_req, res) => {
   const result = await pool.query(`
     SELECT d.id, d.title, d.category, d.description, d.file_path,
@@ -3109,8 +3925,13 @@ app.use((error, _req, res, _next) => {
     return res.status(409).json({ error: 'Nama kategori atau gudang tersebut sudah digunakan.' });
   }
   if (error instanceof multer.MulterError) {
+    const fieldPhotoUploadRequest = _req.path.startsWith('/api/field-monitoring/');
     return res.status(error.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({
-      error: error.code === 'LIMIT_FILE_SIZE' ? 'Ukuran file maksimal 3 MB. Kompres file lalu coba kembali.' : 'Upload file tidak valid.'
+      error: error.code === 'LIMIT_FILE_SIZE'
+        ? fieldPhotoUploadRequest
+          ? 'Ukuran foto maksimal 1 MB per file. Kompres foto lalu coba kembali.'
+          : 'Ukuran file maksimal 3 MB. Kompres file lalu coba kembali.'
+        : 'Upload file tidak valid.'
     });
   }
   res.status(error.status || 500).json({

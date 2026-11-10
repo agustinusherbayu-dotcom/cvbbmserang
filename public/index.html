@@ -8,7 +8,7 @@
     <link rel="icon" type="image/png" href="/images/logo-bbm.png" />
     <link rel="apple-touch-icon" href="/images/logo-bbm.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
-    <link rel="stylesheet" href="/styles.css?v=20261110-manager-finance" />
+    <link rel="stylesheet" href="/styles.css?v=20261110-field-monitoring" />
   </head>
   <body>
     <div id="app" class="app-shell">
@@ -97,6 +97,7 @@
             <button class="nav-btn" data-view="inventory">Inventory</button>
             <button class="nav-btn" data-view="procurement">Pengadaan</button>
             <button class="nav-btn" data-view="documents">Dokumen</button>
+            <button class="nav-btn" data-view="fieldMonitoring">FIELD MONITORING</button>
             <button class="nav-btn" data-view="bonus">Bonus</button>
             <button class="nav-btn" data-view="tasks">Pekerjaan</button>
             <button class="nav-btn" data-view="users">Pengguna</button>
@@ -532,6 +533,90 @@
             </div>
           </section>
 
+          <section id="fieldMonitoringView" class="view hidden">
+            <div class="field-monitoring-header panel">
+              <div>
+                <span class="field-eyebrow">CV BANTEN BANGKIT MAJU</span>
+                <h3>FIELD MONITORING</h3>
+                <p>Pantau dokumentasi kegiatan lapangan dan tindak lanjut pemeriksaan.</p>
+              </div>
+              <a class="mini-btn" id="fieldReportExport" href="/api/field-monitoring/reports.csv">Unduh Laporan CSV</a>
+            </div>
+            <div id="fieldMonitoringNotifications" class="field-notifications" aria-live="polite"></div>
+            <div id="fieldMonitoringLoadError" class="field-monitoring-error hidden" role="alert"></div>
+            <nav class="field-tabs" aria-label="Menu Field Monitoring">
+              <button type="button" class="field-tab active" data-field-tab="dashboard">Dashboard Monitoring</button>
+              <button type="button" class="field-tab" data-field-tab="gallery">Galeri Dokumentasi</button>
+              <button type="button" class="field-tab" data-field-tab="activity">Aktivitas Lapangan</button>
+              <button type="button" class="field-tab" data-field-tab="history">Riwayat Dokumentasi</button>
+            </nav>
+
+            <section class="field-panel" data-field-panel="dashboard">
+              <div id="fieldMonitoringSummary" class="summary-grid"></div>
+              <div class="panel-grid two-col">
+                <div class="panel"><div class="panel-header"><h3>Dokumentasi per Kategori</h3></div><div id="fieldCategorySummary" class="field-breakdown"></div></div>
+                <div class="panel"><div class="panel-header"><h3>Dokumentasi per Karyawan</h3></div><div id="fieldEmployeeSummary" class="field-breakdown"></div></div>
+              </div>
+              <div class="panel"><div class="panel-header"><h3>Aktivitas Terbaru</h3><button class="mini-btn" type="button" data-open-field-tab="gallery">Lihat galeri</button></div><div id="fieldRecentActivity" class="field-activity-list"></div></div>
+              <div class="panel"><div class="panel-header"><h3>Galeri Foto Terbaru</h3></div><div id="fieldDashboardRecentGallery" class="field-dashboard-gallery"></div></div>
+            </section>
+
+            <section class="field-panel hidden" data-field-panel="gallery">
+              <div class="panel">
+                <div class="panel-header"><h3>Galeri Dokumentasi</h3><div class="inline-actions"><button class="mini-btn active" type="button" data-gallery-mode="grid">Grid</button><button class="mini-btn" type="button" data-gallery-mode="timeline">Timeline</button><button class="mini-btn" type="button" data-gallery-mode="category">Kategori</button></div></div>
+                <form id="fieldMonitoringFilter" class="field-filter-grid">
+                  <label><span>Dari tanggal</span><input name="from" type="date" /></label>
+                  <label><span>Sampai tanggal</span><input name="to" type="date" /></label>
+                  <label><span>Bulan</span><select name="month"><option value="">Semua bulan</option></select></label>
+                  <label><span>Tahun</span><input name="year" type="number" min="2020" max="2100" placeholder="Semua tahun" /></label>
+                  <label><span>Karyawan</span><select name="uploader"><option value="">Semua karyawan</option></select></label>
+                  <label><span>Kategori</span><select name="category"><option value="">Semua kategori</option></select></label>
+                  <label><span>Lokasi / proyek / referensi</span><input name="location" maxlength="100" placeholder="Cari lokasi atau proyek" /></label>
+                  <div class="field-filter-actions"><button class="primary-btn small" type="submit">Terapkan Filter</button><button class="ghost-btn" id="clearFieldFilter" type="button">Reset</button></div>
+                </form>
+              </div>
+              <div id="fieldPhotoGallery" class="field-photo-gallery"></div>
+            </section>
+
+            <section class="field-panel hidden" data-field-panel="activity">
+              <div id="fieldUploadPanel" class="panel" data-field-upload>
+                <div class="panel-header"><h3>Upload Dokumentasi Lapangan</h3><span class="field-help">Maksimal 4 foto, 1 MB per foto.</span></div>
+                <form id="fieldReportForm" class="transaction-form">
+                  <div class="form-grid">
+                    <label><span>Judul kegiatan</span><input name="title" maxlength="160" required placeholder="Contoh: Pemeriksaan bahan baku masuk" /></label>
+                    <label><span>Kategori kegiatan</span><select name="category" required><option value="">Pilih kategori</option></select></label>
+                    <label><span>Referensi pekerjaan</span><select name="task_id"><option value="">Tidak dikaitkan</option></select></label>
+                    <label><span>Item inventory</span><select name="inventory_item_id"><option value="">Tidak dikaitkan</option></select></label>
+                    <label><span>Gudang</span><select name="warehouse_id"><option value="">Tidak dikaitkan</option></select></label>
+                    <label data-field-manager-reference><span>Purchase Request</span><select name="purchase_request_id"><option value="">Tidak dikaitkan</option></select></label>
+                  </div>
+                  <label><span>Lokasi kegiatan (opsional)</span><input name="location_name" maxlength="200" placeholder="Nama area, gudang, atau proyek" /></label>
+                  <input type="hidden" name="latitude" /><input type="hidden" name="longitude" />
+                  <div class="inline-actions field-upload-actions">
+                    <button class="mini-btn" id="fieldCameraButton" type="button">Ambil Foto Langsung</button>
+                    <button class="mini-btn" id="fieldGalleryButton" type="button">Upload dari Galeri</button>
+                    <button class="ghost-btn" id="fieldLocationButton" type="button">Tambahkan Lokasi GPS</button>
+                    <span id="fieldLocationStatus" class="field-help">Lokasi GPS opsional, hanya dibagikan jika Anda mengizinkan.</span>
+                  </div>
+                  <input id="fieldCameraInput" class="hidden" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" />
+                  <input id="fieldGalleryInput" class="hidden" type="file" accept="image/jpeg,image/png,image/webp" multiple />
+                  <div id="fieldPhotoPreview" class="field-photo-preview" aria-live="polite"></div>
+                  <label><span>Keterangan pekerjaan</span><textarea name="description" rows="3" maxlength="2000" placeholder="Jelaskan aktivitas dan kondisi aktual"></textarea></label>
+                  <button class="primary-btn" type="submit">Kirim Dokumentasi</button>
+                </form>
+              </div>
+              <div id="fieldRevisionPanel" class="panel hidden">
+                <div class="panel-header"><h3>Perbaikan yang Diminta Manager</h3></div>
+                <div id="fieldRevisionQueue" class="field-report-list"></div>
+              </div>
+              <div class="panel"><div class="panel-header"><h3>Aktivitas Lapangan</h3><span id="fieldActivityHint" class="field-help"></span></div><div id="fieldActivityList" class="field-report-list"></div></div>
+            </section>
+
+            <section class="field-panel hidden" data-field-panel="history">
+              <div class="panel"><div class="panel-header"><h3>Riwayat Dokumentasi dan Pemeriksaan</h3><button class="mini-btn hidden" id="toggleFieldArchive" type="button">Lihat arsip</button></div><div id="fieldHistoryList" class="field-report-list"></div></div>
+            </section>
+          </section>
+
           <section id="bonusView" class="view hidden">
             <div class="panel">
               <div class="panel-header">
@@ -658,6 +743,9 @@
           <button type="button" class="indicator-dialog-close" data-close-indicator aria-label="Tutup rincian">×</button>
         </div>
         <div id="indicatorDialogContent" class="indicator-dialog-content"></div>
+      </dialog>
+      <dialog id="fieldPhotoDialog" class="field-photo-dialog" aria-label="Detail foto lapangan">
+        <div id="fieldPhotoDialogContent"></div>
       </dialog>
 
       <dialog id="changePinDialog" class="indicator-dialog pin-dialog" aria-labelledby="changePinTitle">

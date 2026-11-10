@@ -9,7 +9,15 @@ const state = {
   documents: [],
   bonus: [],
   inventory: null,
-  procurement: null
+  procurement: null,
+  fieldReports: [],
+  fieldDashboard: null,
+  fieldReferences: null,
+  fieldNotifications: [],
+  fieldTab: 'dashboard',
+  galleryMode: 'grid',
+  fieldHistoryArchived: false,
+  fieldPhotos: []
 };
 
 const loginScreen = document.getElementById('loginScreen');
@@ -944,10 +952,10 @@ function renderPurchaseOrderRows() {
 
 function getAllowedViews(role) {
   const map = {
-    DIREKTUR: ['dashboard', 'finance', 'inventory', 'procurement', 'documents', 'bonus', 'tasks', 'users', 'audit'],
-    MANAGER: ['dashboard', 'finance', 'inventory', 'procurement', 'bonus', 'tasks'],
-    KOMISARIS: ['dashboard', 'finance', 'inventory', 'procurement', 'bonus', 'tasks'],
-    KARYAWAN: ['dashboard', 'procurement', 'bonus', 'tasks']
+    DIREKTUR: ['dashboard', 'finance', 'inventory', 'procurement', 'documents', 'fieldMonitoring', 'bonus', 'tasks', 'users', 'audit'],
+    MANAGER: ['dashboard', 'finance', 'inventory', 'procurement', 'fieldMonitoring', 'bonus', 'tasks'],
+    KOMISARIS: ['dashboard', 'finance', 'inventory', 'procurement', 'fieldMonitoring', 'bonus', 'tasks'],
+    KARYAWAN: ['dashboard', 'procurement', 'fieldMonitoring', 'bonus', 'tasks']
   };
 
   return map[role] || ['dashboard'];
@@ -968,6 +976,7 @@ function applyRolePermissions() {
   const taskAssignmentPanel = document.getElementById('taskAssignmentPanel');
   const transactionForm = document.getElementById('transactionForm');
   const documentForm = document.getElementById('documentForm');
+  const canUploadFieldReport = ['DIREKTUR', 'KARYAWAN'].includes(role);
 
   document.querySelectorAll('[data-finance-write]').forEach((section) => {
     section.hidden = !['DIREKTUR', 'MANAGER'].includes(role);
@@ -1002,6 +1011,17 @@ function applyRolePermissions() {
     });
   }
 
+  document.getElementById('fieldUploadPanel').hidden = !canUploadFieldReport;
+  document.getElementById('fieldRevisionPanel').classList.toggle('hidden', role !== 'KARYAWAN');
+  document.getElementById('fieldReportExport').classList.toggle('hidden', !['DIREKTUR', 'KOMISARIS'].includes(role));
+  document.getElementById('toggleFieldArchive').classList.toggle('hidden', !isDirector);
+  document.querySelectorAll('[data-field-tab="dashboard"]').forEach((tab) => {
+    tab.hidden = role === 'KARYAWAN';
+  });
+  document.querySelectorAll('[data-field-manager-reference]').forEach((field) => {
+    field.hidden = !['DIREKTUR', 'MANAGER'].includes(role);
+  });
+
   if (taskForm) {
     taskAssignmentPanel.classList.toggle('hidden', !isDirector);
     taskForm.querySelectorAll('input, select, textarea, button').forEach((element) => {
@@ -1029,6 +1049,7 @@ function setCurrentView(view) {
     inventory: 'Inventory',
     procurement: 'Pengadaan',
     documents: 'Dokumen',
+    fieldMonitoring: 'FIELD MONITORING',
     bonus: 'Bonus',
     tasks: 'Pekerjaan',
     users: 'Pengguna',
@@ -1036,6 +1057,9 @@ function setCurrentView(view) {
   }[safeView];
 
   state.currentView = safeView;
+  if (safeView === 'fieldMonitoring') {
+    setFieldTab(state.fieldTab || (role === 'KARYAWAN' ? 'activity' : 'dashboard'));
+  }
 }
 
 async function apiFetch(url, options = {}) {
@@ -1143,6 +1167,234 @@ async function loadDocuments() {
   renderDocumentTable(documents);
 }
 
+function formatFieldDate(value) {
+  if (!value) return '-';
+  return new Date(value).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+function fieldStatusLabel(status) {
+  return {
+    pending: 'Menunggu Pemeriksaan',
+    reviewed: 'Sudah Diperiksa',
+    needs_revision: 'Perlu Perbaikan'
+  }[status] || status;
+}
+
+function renderFieldReferences() {
+  const refs = state.fieldReferences;
+  if (!refs) return;
+  const categorySelect = document.querySelector('#fieldReportForm [name="category"]');
+  const filterCategory = document.querySelector('#fieldMonitoringFilter [name="category"]');
+  const selectedFilterCategory = filterCategory.value;
+  const selectedUploader = document.querySelector('#fieldMonitoringFilter [name="uploader"]').value;
+  categorySelect.innerHTML = '<option value="">Pilih kategori</option>' + refs.categories
+    .map((category) => `<option value="${escapeHtml(category)}">${escapeHtml(category)}</option>`).join('');
+  filterCategory.innerHTML = '<option value="">Semua kategori</option>' + refs.categories
+    .map((category) => `<option value="${escapeHtml(category)}">${escapeHtml(category)}</option>`).join('');
+  filterCategory.value = selectedFilterCategory;
+  document.querySelector('#fieldReportForm [name="task_id"]').innerHTML = '<option value="">Tidak dikaitkan</option>' + refs.tasks
+    .map((task) => `<option value="${Number(task.id)}">${escapeHtml(task.title)} · ${escapeHtml(task.status)}</option>`).join('');
+  document.querySelector('#fieldReportForm [name="inventory_item_id"]').innerHTML = '<option value="">Tidak dikaitkan</option>' + refs.inventoryItems
+    .map((item) => `<option value="${Number(item.id)}">${escapeHtml(item.sku)} · ${escapeHtml(item.name)}</option>`).join('');
+  document.querySelector('#fieldReportForm [name="warehouse_id"]').innerHTML = '<option value="">Tidak dikaitkan</option>' + refs.warehouses
+    .map((warehouse) => `<option value="${Number(warehouse.id)}">${escapeHtml(warehouse.name)}</option>`).join('');
+  document.querySelector('#fieldReportForm [name="purchase_request_id"]').innerHTML = '<option value="">Tidak dikaitkan</option>' + refs.purchaseRequests
+    .map((request) => `<option value="${Number(request.id)}">${escapeHtml(request.request_number)} · ${escapeHtml(request.category)}</option>`).join('');
+  const monthSelect = document.querySelector('#fieldMonitoringFilter [name="month"]');
+  monthSelect.innerHTML = '<option value="">Semua bulan</option>' + Array.from({ length: 12 }, (_, index) =>
+    `<option value="${index + 1}">${new Date(2026, index, 1).toLocaleDateString('id-ID', { month: 'long' })}</option>`
+  ).join('');
+  document.querySelector('#fieldMonitoringFilter [name="uploader"]').innerHTML = '<option value="">Semua karyawan</option>' + [...new Map(
+    state.fieldReports.map((report) => [String(report.uploader_id), report.uploader_name])
+  )].map(([id, name]) => `<option value="${Number(id)}">${escapeHtml(name)}</option>`).join('');
+  document.querySelector('#fieldMonitoringFilter [name="uploader"]').value = selectedUploader;
+}
+
+function renderFieldDashboard(data) {
+  const totals = data?.totals || {};
+  const cards = [
+    ['Total dokumentasi', totals.total || 0],
+    ['Dokumentasi hari ini', totals.today || 0],
+    ['Dokumentasi minggu ini', totals.this_week || 0],
+    ['Dokumentasi bulan ini', totals.this_month || 0],
+    ['Menunggu pemeriksaan', totals.pending_review || 0],
+    ['Perlu perbaikan', totals.needs_revision || 0]
+  ];
+  document.getElementById('fieldMonitoringSummary').innerHTML = cards.map(([label, value]) => `
+    <div class="summary-card"><span class="label">${escapeHtml(label)}</span><p class="value">${Number(value).toLocaleString('id-ID')}</p></div>
+  `).join('');
+  document.getElementById('fieldCategorySummary').innerHTML = (data?.categories || []).map((item) => `
+    <div class="field-breakdown-row"><span>${escapeHtml(item.category)}</span><strong>${Number(item.count)}</strong></div>
+  `).join('') || '<p>Belum ada dokumentasi.</p>';
+  document.getElementById('fieldEmployeeSummary').innerHTML = (data?.employees || []).map((item) => `
+    <div class="field-breakdown-row"><span>${escapeHtml(item.name)}</span><strong>${Number(item.count)}</strong></div>
+  `).join('') || '<p>Belum ada aktivitas karyawan.</p>';
+  document.getElementById('fieldRecentActivity').innerHTML = (data?.recent || []).map((report) => `
+    <button class="field-activity-row" type="button" data-open-field-report="${Number(report.id)}">
+      <span><strong>${escapeHtml(report.title)}</strong><small>${escapeHtml(report.uploader_name)} · ${escapeHtml(report.category)}</small></span>
+      <span>${formatFieldDate(report.created_at)} · ${Number(report.photo_count)} foto</span>
+    </button>
+  `).join('') || '<p>Belum ada aktivitas lapangan.</p>';
+  document.getElementById('fieldDashboardRecentGallery').innerHTML = (data?.recent || []).filter((report) => report.first_photo_id).map((report) => `
+    <article class="field-dashboard-photo">
+      <img src="/api/field-monitoring/photos/${Number(report.first_photo_id)}/preview" loading="lazy" alt="${escapeHtml(report.title)}" />
+      <div><strong>${escapeHtml(report.title)}</strong><span>${escapeHtml(report.uploader_name)} · ${formatFieldDate(report.created_at)}</span></div>
+    </article>
+  `).join('') || '<p>Belum ada foto terbaru.</p>';
+}
+
+function fieldReportCard(report, context = 'activity') {
+  const isDirector = state.user?.role === 'DIREKTUR';
+  const isManager = state.user?.role === 'MANAGER';
+  const isOwner = String(report.uploader_id) === String(state.user?.id);
+  const canAct = context === 'activity';
+  const firstPhoto = report.photos?.[0];
+  const related = [report.task_title, report.inventory_item_name, report.warehouse_name, report.request_number].filter(Boolean).join(' · ');
+  const photoButtons = (report.photos || []).slice(0, 4).map((photo, index) => `
+    <button class="field-report-thumb" type="button" data-open-field-photo="${Number(photo.id)}" data-report-id="${Number(report.id)}" aria-label="Buka foto ${index + 1}">
+      <img src="/api/field-monitoring/photos/${Number(photo.id)}/preview" loading="lazy" alt="${escapeHtml(report.title)}" />
+    </button>
+  `).join('');
+  const history = (report.reviews || []).map((review) => `
+    <div class="field-review-entry"><strong>${escapeHtml(fieldStatusLabel(review.status))}</strong><span>${escapeHtml(review.reviewer_name)} · ${formatFieldDate(review.created_at)}</span>${review.note ? `<p>${escapeHtml(review.note)}</p>` : ''}</div>
+  `).join('');
+  const reviewerActions = canAct && isManager && report.status === 'pending' ? `
+    <div class="field-review-actions">
+      <label><span>Catatan pemeriksaan (wajib untuk perbaikan)</span><textarea rows="2" maxlength="2000" data-field-review-note="${Number(report.id)}"></textarea></label>
+      <div class="inline-actions"><button class="mini-btn success" type="button" data-field-review="reviewed" data-report-id="${Number(report.id)}">Tandai sudah diperiksa</button><button class="mini-btn danger" type="button" data-field-review="needs_revision" data-report-id="${Number(report.id)}">Minta perbaikan</button></div>
+    </div>
+  ` : '';
+  const revisionForm = canAct && isOwner && report.status === 'needs_revision' ? `
+    <form class="field-revision-form" data-field-revision="${Number(report.id)}">
+      <label><span>Perbaiki keterangan</span><textarea name="description" rows="2" maxlength="2000" required>${escapeHtml(report.description)}</textarea></label>
+      <label><span>Foto dokumentasi perbaikan (1–4 foto)</span><input type="file" name="photos" accept="image/jpeg,image/png,image/webp" multiple required /></label>
+      <div class="field-revision-preview"></div><button class="mini-btn success" type="submit">Kirim Perbaikan</button>
+    </form>
+  ` : '';
+  const editForm = canAct && isDirector && !report.archived_at ? `
+    <details class="field-edit-details"><summary>Edit metadata</summary>
+      <form class="field-metadata-form" data-field-metadata="${Number(report.id)}">
+        <label><span>Judul</span><input name="title" maxlength="160" required value="${escapeHtml(report.title)}" /></label>
+        <label><span>Kategori</span><select name="category" required>${state.fieldReferences.categories.map((category) => `<option value="${escapeHtml(category)}" ${category === report.category ? 'selected' : ''}>${escapeHtml(category)}</option>`).join('')}</select></label>
+        <label><span>Lokasi</span><input name="location_name" maxlength="200" value="${escapeHtml(report.location_name || '')}" /></label>
+        <label><span>Keterangan</span><textarea name="description" rows="2" maxlength="2000">${escapeHtml(report.description || '')}</textarea></label>
+        <button class="mini-btn" type="submit">Simpan metadata</button>
+      </form>
+    </details>
+  ` : '';
+  return `
+    <article class="field-report-card ${context === 'gallery' ? 'gallery-report-card' : ''}" data-field-report="${Number(report.id)}">
+      ${firstPhoto ? `<button class="field-report-cover" type="button" data-open-field-photo="${Number(firstPhoto.id)}" data-report-id="${Number(report.id)}"><img src="/api/field-monitoring/photos/${Number(firstPhoto.id)}/preview" loading="lazy" alt="${escapeHtml(report.title)}" /></button>` : ''}
+      <div class="field-report-content">
+        <div class="field-report-heading"><div><h4>${escapeHtml(report.title)}${report.archived_at ? ' · Diarsipkan' : ''}</h4><span class="field-eyebrow">${escapeHtml(report.category)}</span></div><span class="tag ${report.status === 'reviewed' ? 'approved' : report.status === 'needs_revision' ? 'inactive' : 'pending'}">${escapeHtml(fieldStatusLabel(report.status))}</span></div>
+        <p class="field-report-description">${escapeHtml(report.description || 'Tanpa keterangan')}</p>
+        <div class="field-report-meta"><span>${escapeHtml(report.uploader_name)} · Upload ${formatFieldDate(report.created_at)}</span><span>${Number(report.photos?.length || 0)} foto</span></div>
+        ${(report.photos || []).some((photo) => photo.captured_at) ? `<div class="field-capture-time">Waktu pengambilan (metadata): ${(report.photos || []).filter((photo) => photo.captured_at).map((photo) => formatFieldDate(photo.captured_at)).join(', ')}</div>` : ''}
+        ${report.location_name ? `<p class="field-report-reference">Lokasi: ${escapeHtml(report.location_name)}${report.location_lat ? ` (${escapeHtml(report.location_lat)}, ${escapeHtml(report.location_lon)})` : ''}</p>` : ''}
+        ${related ? `<p class="field-report-reference">Referensi: ${escapeHtml(related)}</p>` : ''}
+        <div class="field-report-thumbnails">${photoButtons}</div>
+        ${report.reviewer_name ? `<p class="field-report-reference">Pemeriksa terakhir: ${escapeHtml(report.reviewer_name)} · ${formatFieldDate(report.reviewed_at)}</p>` : ''}
+        ${history ? `<details class="field-review-history"><summary>Riwayat pemeriksaan (${report.reviews.length})</summary>${history}</details>` : ''}
+        ${context === 'history' && report.revisions?.length ? `<details class="field-review-history"><summary>Riwayat perbaikan (${report.revisions.length})</summary>${report.revisions.map((revision) => `<div class="field-review-entry"><strong>Revisi ${Number(revision.revision_number)}</strong><span>${formatFieldDate(revision.created_at)}</span><p>${escapeHtml(revision.description || 'Tanpa keterangan')}</p></div>`).join('')}</details>` : ''}
+        ${context === 'history' && report.changes?.length ? `<details class="field-review-history"><summary>Perubahan metadata (${report.changes.length})</summary>${report.changes.map((change) => `<div class="field-review-entry"><strong>${escapeHtml(change.change_type)}</strong><span>${escapeHtml(change.actor_name)} · ${formatFieldDate(change.created_at)}</span><p>${escapeHtml(JSON.stringify(change.before_data))} → ${escapeHtml(JSON.stringify(change.after_data))}</p></div>`).join('')}</details>` : ''}
+        ${reviewerActions}
+        ${revisionForm}
+        ${editForm}
+        <div class="inline-actions field-report-footer">
+          ${report.photos?.[0] ? `<a class="mini-btn" href="/api/field-monitoring/photos/${Number(report.photos[0].id)}/download">Unduh foto</a>` : ''}
+          ${isDirector && context === 'history' && report.archived_at ? `<button class="mini-btn success" type="button" data-restore-field-report="${Number(report.id)}">Pulihkan dokumentasi</button>` : ''}
+          ${isDirector && canAct && !report.archived_at ? `<button class="mini-btn danger" type="button" data-archive-field-report="${Number(report.id)}">Arsipkan dokumentasi</button>` : ''}
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function renderFieldReports() {
+  const reports = state.fieldReports || [];
+  document.getElementById('fieldActivityList').innerHTML = reports.map((report) => fieldReportCard(report)).join('')
+    || '<p>Belum ada dokumentasi lapangan.</p>';
+  const revisionReports = reports.filter((report) => report.status === 'needs_revision'
+    && String(report.uploader_id) === String(state.user?.id));
+  document.getElementById('fieldRevisionQueue').innerHTML = revisionReports.map((report) => fieldReportCard(report, 'queue')).join('')
+    || '<p>Tidak ada perbaikan yang menunggu.</p>';
+  document.getElementById('fieldActivityHint').textContent = state.user?.role === 'KARYAWAN'
+    ? 'Anda hanya dapat melihat dokumentasi yang diunggah dari akun Anda.'
+    : 'Klik foto untuk melihat ukuran besar dan detail kegiatan.';
+  document.getElementById('fieldHistoryList').innerHTML = reports.map((report) => fieldReportCard(report, 'history')).join('')
+    || '<p>Belum ada riwayat dokumentasi.</p>';
+  renderFieldGallery();
+}
+
+function renderFieldGallery() {
+  const gallery = document.getElementById('fieldPhotoGallery');
+  gallery.className = `field-photo-gallery mode-${state.galleryMode}`;
+  let lastGroup = '';
+  const parts = [];
+  const reports = [...(state.fieldReports || [])];
+  if (state.galleryMode === 'timeline') {
+    reports.sort((left, right) => new Date(right.created_at) - new Date(left.created_at));
+  }
+  if (state.galleryMode === 'category') {
+    reports.sort((left, right) => left.category.localeCompare(right.category) || new Date(right.created_at) - new Date(left.created_at));
+  }
+  for (const report of reports) {
+    const group = state.galleryMode === 'timeline'
+      ? new Date(report.created_at).toLocaleDateString('id-ID', { dateStyle: 'full' })
+      : state.galleryMode === 'category' ? report.category : '';
+    if (group && group !== lastGroup) {
+      parts.push(`<h3 class="field-gallery-group">${escapeHtml(group)}</h3>`);
+      lastGroup = group;
+    }
+    parts.push(fieldReportCard(report, 'gallery'));
+  }
+  gallery.innerHTML = parts.join('') || '<p class="panel">Belum ada foto yang cocok dengan filter.</p>';
+}
+
+async function loadFieldReports(query = '') {
+  const reports = await apiFetch(`/api/field-monitoring/reports${query}`);
+  state.fieldReports = reports;
+  const exportParams = new URLSearchParams(query.startsWith('?') ? query.slice(1) : query);
+  exportParams.delete('history');
+  document.getElementById('fieldReportExport').href = `/api/field-monitoring/reports.csv${exportParams.toString() ? `?${exportParams}` : ''}`;
+  renderFieldReferences();
+  renderFieldReports();
+}
+
+async function loadFieldNotifications() {
+  const notifications = await apiFetch('/api/field-monitoring/notifications');
+  state.fieldNotifications = notifications;
+  const unread = notifications.filter((notification) => !notification.read_at);
+  document.getElementById('fieldMonitoringNotifications').innerHTML = unread.length
+    ? `<div class="field-notification-banner"><strong>${unread.length} notifikasi belum dibaca</strong>${unread.slice(0, 5).map((notification) => `<button type="button" data-read-field-notification="${Number(notification.id)}">${escapeHtml(notification.message)} <span>${formatFieldDate(notification.created_at)}</span></button>`).join('')}</div>`
+    : '';
+}
+
+async function loadFieldMonitoring(query = '') {
+  const errorPanel = document.getElementById('fieldMonitoringLoadError');
+  try {
+    state.fieldReferences = await apiFetch('/api/field-monitoring/references');
+    renderFieldReferences();
+    const jobs = [loadFieldReports(query), loadFieldNotifications()];
+    if (state.user.role !== 'KARYAWAN') {
+      jobs.push(apiFetch('/api/field-monitoring/dashboard').then((data) => {
+        state.fieldDashboard = data;
+        renderFieldDashboard(data);
+      }));
+    } else {
+      state.fieldDashboard = null;
+      document.getElementById('fieldMonitoringSummary').innerHTML = '';
+    }
+    await Promise.all(jobs);
+    errorPanel.hidden = true;
+    errorPanel.textContent = '';
+  } catch (error) {
+    errorPanel.hidden = false;
+    errorPanel.textContent = `Field Monitoring gagal dimuat: ${error.message}`;
+    throw error;
+  }
+}
+
 async function loadBonus() {
   const bonus = await apiFetch('/api/bonus');
   state.bonus = bonus;
@@ -1153,12 +1405,13 @@ async function refreshData() {
   try {
     await loadDashboard();
     if (state.user.role === 'DIREKTUR') {
-        await Promise.all([loadFinance(), loadInventory(), loadProcurement(), loadDocuments(), loadBonus(), loadUsers(), loadAudit(), loadTasks()]);
+        await Promise.all([loadFinance(), loadInventory(), loadProcurement(), loadDocuments(), loadBonus(), loadUsers(), loadAudit(), loadTasks(), loadFieldMonitoring()]);
       } else {
         const tasks = [loadBonus(), loadTasks()];
         if (getAllowedViews(state.user.role).includes('finance')) tasks.push(loadFinance());
         if (getAllowedViews(state.user.role).includes('inventory')) tasks.push(loadInventory());
         if (getAllowedViews(state.user.role).includes('procurement')) tasks.push(loadProcurement());
+        tasks.push(loadFieldMonitoring());
         await Promise.all(tasks);
       }
   } catch (error) {
@@ -1203,6 +1456,8 @@ function showDashboard() {
   userName.textContent = state.user?.name || '-';
   userRole.textContent = state.user?.role === 'DIREKTUR' ? 'Admin · Direktur' : state.user?.role || 'KARYAWAN';
   document.getElementById('exportExcelBtn').hidden = state.user?.role !== 'DIREKTUR';
+  document.getElementById('fieldReportExport').classList.toggle('hidden', !['DIREKTUR', 'KOMISARIS'].includes(state.user?.role));
+  state.fieldTab = state.user?.role === 'KARYAWAN' ? 'activity' : 'dashboard';
   applyRolePermissions();
   setCurrentView(state.currentView || 'dashboard');
 }
@@ -1311,6 +1566,239 @@ document.getElementById('exportExcelBtn').addEventListener('click', () => {
   }
 });
 
+function setFieldTab(tab) {
+  state.fieldTab = tab;
+  document.querySelectorAll('[data-field-tab]').forEach((button) => {
+    button.classList.toggle('active', button.dataset.fieldTab === tab);
+  });
+  document.querySelectorAll('[data-field-panel]').forEach((panel) => {
+    panel.classList.toggle('hidden', panel.dataset.fieldPanel !== tab);
+  });
+}
+
+function getFieldFilterQuery() {
+  const form = document.getElementById('fieldMonitoringFilter');
+  const params = new URLSearchParams(new FormData(form));
+  for (const [key, value] of [...params.entries()]) {
+    if (!value) params.delete(key);
+  }
+  if (state.fieldHistoryArchived && state.user?.role === 'DIREKTUR') params.set('history', '1');
+  const query = params.toString();
+  return query ? `?${query}` : '';
+}
+
+async function readJpegCaptureDate(file) {
+  if (file.type !== 'image/jpeg') return null;
+  const buffer = await file.arrayBuffer();
+  const view = new DataView(buffer);
+  const readAscii = (offset, length) => String.fromCharCode(...new Uint8Array(buffer, offset, length));
+  let offset = 2;
+  while (offset + 4 < view.byteLength) {
+    if (view.getUint8(offset) !== 0xff) break;
+    const marker = view.getUint8(offset + 1);
+    if (marker === 0xd9 || marker === 0xda) break;
+    const segmentLength = view.getUint16(offset + 2, false);
+    if (marker === 0xe1 && readAscii(offset + 4, 6) === 'Exif\u0000\u0000') {
+      const tiff = offset + 10;
+      const littleEndian = readAscii(tiff, 2) === 'II';
+      const u16 = (position) => view.getUint16(position, littleEndian);
+      const u32 = (position) => view.getUint32(position, littleEndian);
+      const ifd0 = tiff + u32(tiff + 4);
+      const entryCount = u16(ifd0);
+      for (let index = 0; index < entryCount; index += 1) {
+        const entry = ifd0 + 2 + index * 12;
+        if (u16(entry) !== 0x8769) continue;
+        const exifIfd = tiff + u32(entry + 8);
+        const exifCount = u16(exifIfd);
+        for (let item = 0; item < exifCount; item += 1) {
+          const exifEntry = exifIfd + 2 + item * 12;
+          if (u16(exifEntry) !== 0x9003) continue;
+          const textLength = Math.min(u32(exifEntry + 4), 40);
+          const textOffset = tiff + u32(exifEntry + 8);
+          const value = readAscii(textOffset, textLength).replace(/\0+$/, '');
+          return /^\d{4}:\d{2}:\d{2} \d{2}:\d{2}:\d{2}$/.test(value) ? value : null;
+        }
+      }
+    }
+    offset += segmentLength + 2;
+  }
+  return null;
+}
+
+function canvasBlob(canvas, quality) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('Foto tidak dapat diproses di browser ini.')), 'image/jpeg', quality);
+  });
+}
+
+function loadFieldImage(file) {
+  if (typeof createImageBitmap === 'function') return createImageBitmap(file);
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve({ width: image.naturalWidth, height: image.naturalHeight, close: () => {}, image });
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('Foto tidak dapat dibuka di browser ini.'));
+    };
+    image.src = url;
+  });
+}
+
+async function prepareFieldPhoto(file) {
+  if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+    throw new Error(`Format foto "${file.name}" tidak didukung. Pilih JPG, PNG, atau WebP.`);
+  }
+  const capturedAt = await readJpegCaptureDate(file).catch(() => null);
+  const bitmap = await loadFieldImage(file);
+  const scale = Math.min(1, 1600 / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+  canvas.getContext('2d').drawImage(bitmap.image || bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+  let blob = await canvasBlob(canvas, 0.78);
+  if (blob.size > 1024 * 1024) blob = await canvasBlob(canvas, 0.64);
+  if (blob.size > 1024 * 1024) {
+    const reduced = document.createElement('canvas');
+    const secondScale = 1200 / Math.max(canvas.width, canvas.height);
+    reduced.width = Math.max(1, Math.round(canvas.width * secondScale));
+    reduced.height = Math.max(1, Math.round(canvas.height * secondScale));
+    reduced.getContext('2d').drawImage(canvas, 0, 0, reduced.width, reduced.height);
+    blob = await canvasBlob(reduced, 0.62);
+  }
+  if (blob.size > 1024 * 1024) throw new Error(`Foto "${file.name}" tetap lebih dari 1 MB setelah kompresi.`);
+  const baseName = file.name.replace(/\.[^.]+$/, '').slice(0, 100) || 'foto-lapangan';
+  return { file: new File([blob], `${baseName}.jpg`, { type: 'image/jpeg' }), capturedAt };
+}
+
+async function addFieldPhotos(files, previewTarget) {
+  const additions = [...files];
+  if (state.fieldPhotos.length + additions.length > 4) {
+    throw new Error('Maksimal 4 foto untuk satu dokumentasi.');
+  }
+  for (const file of additions) {
+    state.fieldPhotos.push(await prepareFieldPhoto(file));
+  }
+  renderFieldPhotoPreviews(previewTarget);
+}
+
+function renderFieldPhotoPreviews(target = document.getElementById('fieldPhotoPreview')) {
+  target.querySelectorAll('img').forEach((image) => {
+    if (image.src.startsWith('blob:')) URL.revokeObjectURL(image.src);
+  });
+  target.innerHTML = state.fieldPhotos.map((photo, index) => {
+    const url = URL.createObjectURL(photo.file);
+    return `<div class="field-preview-item"><img src="${url}" alt="Pratinjau foto ${index + 1}" /><span>${escapeHtml(photo.file.name)} · ${(photo.file.size / 1024).toFixed(0)} KB${photo.capturedAt ? ` · Diambil ${escapeHtml(photo.capturedAt)}` : ''}</span><button type="button" class="mini-btn danger" data-remove-field-photo="${index}">Hapus</button></div>`;
+  }).join('');
+}
+
+document.querySelectorAll('[data-field-tab]').forEach((button) => {
+  button.addEventListener('click', () => setFieldTab(button.dataset.fieldTab));
+});
+
+document.getElementById('fieldCameraButton').addEventListener('click', () => document.getElementById('fieldCameraInput').click());
+document.getElementById('fieldGalleryButton').addEventListener('click', () => document.getElementById('fieldGalleryInput').click());
+for (const input of [document.getElementById('fieldCameraInput'), document.getElementById('fieldGalleryInput')]) {
+  input.addEventListener('change', async () => {
+    try {
+      await addFieldPhotos(input.files, document.getElementById('fieldPhotoPreview'));
+    } catch (error) {
+      alert(error.message);
+    } finally {
+      input.value = '';
+    }
+  });
+}
+
+document.getElementById('fieldLocationButton').addEventListener('click', () => {
+  const status = document.getElementById('fieldLocationStatus');
+  if (!navigator.geolocation) {
+    status.textContent = 'Perangkat ini tidak menyediakan lokasi GPS. Foto tetap dapat diunggah.';
+    return;
+  }
+  status.textContent = 'Meminta izin lokasi...';
+  navigator.geolocation.getCurrentPosition((position) => {
+    document.querySelector('#fieldReportForm [name="latitude"]').value = String(position.coords.latitude);
+    document.querySelector('#fieldReportForm [name="longitude"]').value = String(position.coords.longitude);
+    status.textContent = `Lokasi GPS ditambahkan (${position.coords.latitude.toFixed(5)}, ${position.coords.longitude.toFixed(5)}).`;
+  }, (error) => {
+    status.textContent = error.code === error.PERMISSION_DENIED
+      ? 'Izin lokasi tidak diberikan. Foto tetap dapat diunggah.'
+      : 'Lokasi tidak tersedia. Foto tetap dapat diunggah.';
+  }, { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 });
+});
+
+document.getElementById('fieldReportForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!state.fieldPhotos.length) {
+    alert('Pilih atau ambil minimal satu foto.');
+    return;
+  }
+  const form = event.currentTarget;
+  const button = form.querySelector('button[type="submit"]');
+  button.disabled = true;
+  const data = new FormData(form);
+  state.fieldPhotos.forEach((photo) => data.append('photos', photo.file, photo.file.name));
+  data.set('photo_captured_at', JSON.stringify(state.fieldPhotos.map((photo) => photo.capturedAt)));
+  try {
+    await apiFetch('/api/field-monitoring/reports', { method: 'POST', body: data });
+    form.reset();
+    state.fieldPhotos = [];
+    renderFieldPhotoPreviews();
+    document.getElementById('fieldLocationStatus').textContent = 'Lokasi GPS opsional, hanya dibagikan jika Anda mengizinkan.';
+    await refreshData();
+    alert('Dokumentasi berhasil dikirim dan menunggu pemeriksaan.');
+  } catch (error) {
+    alert(error.message);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+document.getElementById('fieldMonitoringFilter').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  try {
+    await loadFieldReports(getFieldFilterQuery());
+  } catch (error) {
+    alert(error.message);
+  }
+});
+
+document.getElementById('clearFieldFilter').addEventListener('click', async () => {
+  document.getElementById('fieldMonitoringFilter').reset();
+  state.fieldHistoryArchived = false;
+  document.getElementById('toggleFieldArchive').textContent = 'Lihat arsip';
+  try {
+    await loadFieldReports(getFieldFilterQuery());
+  } catch (error) {
+    alert(error.message);
+  }
+});
+
+document.querySelectorAll('[data-gallery-mode]').forEach((button) => {
+  button.addEventListener('click', () => {
+    state.galleryMode = button.dataset.galleryMode;
+    document.querySelectorAll('[data-gallery-mode]').forEach((modeButton) => {
+      modeButton.classList.toggle('active', modeButton === button);
+    });
+    renderFieldGallery();
+  });
+});
+
+document.getElementById('toggleFieldArchive').addEventListener('click', async (event) => {
+  state.fieldHistoryArchived = !state.fieldHistoryArchived;
+  event.currentTarget.textContent = state.fieldHistoryArchived ? 'Sembunyikan arsip' : 'Lihat arsip';
+  try {
+    await loadFieldReports(getFieldFilterQuery());
+  } catch (error) {
+    alert(error.message);
+  }
+});
+
 document.querySelectorAll('.nav-btn').forEach((button) => {
   button.addEventListener('click', () => {
     setCurrentView(button.dataset.view);
@@ -1323,7 +1811,186 @@ togglePinBtn.addEventListener('click', () => {
   togglePinBtn.textContent = isHidden ? 'Sembunyikan' : 'Lihat';
 });
 
+document.addEventListener('change', async (event) => {
+  const form = event.target.closest('[data-field-revision]');
+  if (!form || event.target.name !== 'photos') return;
+  const preview = form.querySelector('.field-revision-preview');
+  preview.querySelectorAll('img').forEach((image) => {
+    if (image.src.startsWith('blob:')) URL.revokeObjectURL(image.src);
+  });
+  try {
+    const files = [...event.target.files];
+    if (files.length > 4) throw new Error('Maksimal 4 foto untuk satu perbaikan.');
+    const prepared = await Promise.all(files.map(prepareFieldPhoto));
+    form._preparedPhotos = prepared;
+    preview.innerHTML = prepared.map((photo) => `<img src="${URL.createObjectURL(photo.file)}" alt="Pratinjau foto perbaikan" />`).join('');
+  } catch (error) {
+    form._preparedPhotos = [];
+    preview.textContent = error.message;
+  }
+});
+
+document.addEventListener('submit', async (event) => {
+  const form = event.target.closest('[data-field-revision]');
+  if (form) {
+    event.preventDefault();
+    const photos = form._preparedPhotos || [];
+    if (!photos.length) {
+      alert('Pilih minimal satu foto yang valid.');
+      return;
+    }
+    const button = form.querySelector('button[type="submit"]');
+    button.disabled = true;
+    const data = new FormData(form);
+    data.delete('photos');
+    photos.forEach((photo) => data.append('photos', photo.file, photo.file.name));
+    data.set('photo_captured_at', JSON.stringify(photos.map((photo) => photo.capturedAt)));
+    try {
+      await apiFetch(`/api/field-monitoring/reports/${Number(form.dataset.fieldRevision)}/revisions`, {
+        method: 'POST',
+        body: data
+      });
+      await refreshData();
+      alert('Foto perbaikan berhasil dikirim untuk diperiksa kembali.');
+    } catch (error) {
+      alert(error.message);
+    } finally {
+      button.disabled = false;
+    }
+    return;
+  }
+
+  const formMetadata = event.target.closest('[data-field-metadata]');
+  if (!formMetadata) return;
+  event.preventDefault();
+  const button = formMetadata.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    const values = Object.fromEntries(new FormData(formMetadata).entries());
+    await apiFetch(`/api/field-monitoring/reports/${Number(formMetadata.dataset.fieldMetadata)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(values)
+    });
+    await refreshData();
+  } catch (error) {
+    alert(error.message);
+  } finally {
+    button.disabled = false;
+  }
+});
+
 document.addEventListener('click', async (event) => {
+  const fieldTabButton = event.target.closest('[data-open-field-tab]');
+  if (fieldTabButton) {
+    setCurrentView('fieldMonitoring');
+    setFieldTab(fieldTabButton.dataset.openFieldTab);
+    return;
+  }
+  const removeFieldPhotoButton = event.target.closest('[data-remove-field-photo]');
+  if (removeFieldPhotoButton) {
+    state.fieldPhotos.splice(Number(removeFieldPhotoButton.dataset.removeFieldPhoto), 1);
+    renderFieldPhotoPreviews();
+    return;
+  }
+  const reviewButton = event.target.closest('[data-field-review]');
+  if (reviewButton) {
+    const reportId = Number(reviewButton.dataset.reportId);
+    const note = document.querySelector(`[data-field-review-note="${reportId}"]`)?.value.trim() || '';
+    const status = reviewButton.dataset.fieldReview;
+    if (status === 'needs_revision' && note.length < 3) {
+      alert('Catatan perbaikan wajib diisi minimal 3 karakter.');
+      return;
+    }
+    reviewButton.disabled = true;
+    try {
+      await apiFetch(`/api/field-monitoring/reports/${reportId}/review`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status, note })
+      });
+      await refreshData();
+      alert(status === 'reviewed' ? 'Dokumentasi ditandai sudah diperiksa.' : 'Catatan perbaikan dikirim kepada karyawan.');
+    } catch (error) {
+      alert(error.message);
+    } finally {
+      reviewButton.disabled = false;
+    }
+    return;
+  }
+  const archiveFieldReportButton = event.target.closest('[data-archive-field-report]');
+  const restoreFieldReportButton = event.target.closest('[data-restore-field-report]');
+  if (archiveFieldReportButton || restoreFieldReportButton) {
+    const button = archiveFieldReportButton || restoreFieldReportButton;
+    const reportId = Number(button.dataset.archiveFieldReport || button.dataset.restoreFieldReport);
+    const action = archiveFieldReportButton ? 'archive' : 'restore';
+    if (action === 'archive' && !window.confirm('Arsipkan dokumentasi ini? Bukti foto tetap tersimpan dan dapat dipulihkan Direktur.')) return;
+    button.disabled = true;
+    try {
+      await apiFetch(`/api/field-monitoring/reports/${reportId}/${action}`, { method: 'POST' });
+      await loadFieldReports(getFieldFilterQuery());
+    } catch (error) {
+      alert(error.message);
+    } finally {
+      button.disabled = false;
+    }
+    return;
+  }
+  const notificationButton = event.target.closest('[data-read-field-notification]');
+  if (notificationButton) {
+    try {
+      await apiFetch(`/api/field-monitoring/notifications/${Number(notificationButton.dataset.readFieldNotification)}/read`, {
+        method: 'POST'
+      });
+      await loadFieldNotifications();
+    } catch (error) {
+      alert(error.message);
+    }
+    return;
+  }
+  const openPhotoButton = event.target.closest('[data-open-field-photo]');
+  if (openPhotoButton) {
+    const report = state.fieldReports.find((item) => Number(item.id) === Number(openPhotoButton.dataset.reportId));
+    const photoId = Number(openPhotoButton.dataset.openFieldPhoto);
+    if (!report) return;
+    const photos = report.photos || [];
+    let zoom = 1;
+    const renderModalPhoto = (selectedPhotoId) => {
+      const selectedPhoto = photos.find((photo) => Number(photo.id) === selectedPhotoId) || photos[0];
+      document.getElementById('fieldPhotoDialogContent').innerHTML = `
+        <div class="field-photo-dialog-header"><div><h2>${escapeHtml(report.title)}</h2><p>${escapeHtml(report.uploader_name)} · ${escapeHtml(report.category)}</p></div><button class="indicator-dialog-close" type="button" data-close-field-photo aria-label="Tutup">×</button></div>
+        <div class="field-photo-large-wrap"><img class="field-photo-large" src="/api/field-monitoring/photos/${Number(selectedPhoto.id)}/preview" alt="${escapeHtml(report.title)}" style="transform:scale(${zoom})" /></div>
+        <div class="inline-actions field-photo-tools"><button class="mini-btn" type="button" data-photo-zoom="-">Perkecil</button><button class="mini-btn" type="button" data-photo-zoom="+">Perbesar</button><a class="mini-btn" href="/api/field-monitoring/photos/${Number(selectedPhoto.id)}/download">Unduh foto</a></div>
+        <div class="field-photo-details"><strong>Diunggah</strong><span>${formatFieldDate(report.created_at)}</span><strong>Lokasi</strong><span>${escapeHtml(report.location_name || 'Tidak tersedia')}${report.location_lat ? ` · ${escapeHtml(report.location_lat)}, ${escapeHtml(report.location_lon)}` : ''}</span><strong>Waktu pengambilan</strong><span>${selectedPhoto.captured_at ? formatFieldDate(selectedPhoto.captured_at) : 'Metadata tidak tersedia; waktu pengambilan belum dikonfirmasi'}</span><strong>Keterangan</strong><span>${escapeHtml(report.description || 'Tanpa keterangan')}</span><strong>Status</strong><span>${escapeHtml(fieldStatusLabel(report.status))}</span></div>
+        ${photos.length > 1 ? `<div class="field-dialog-thumbnails">${photos.map((photo) => `<button type="button" data-dialog-photo="${Number(photo.id)}" class="${Number(photo.id) === Number(selectedPhoto.id) ? 'active' : ''}"><img src="/api/field-monitoring/photos/${Number(photo.id)}/preview" alt="Foto lain dari aktivitas" /></button>`).join('')}</div>` : ''}
+      `;
+    };
+    renderModalPhoto(photoId);
+    const dialog = document.getElementById('fieldPhotoDialog');
+    dialog.showModal();
+    dialog.onClickHandler = (clickEvent) => {
+      if (clickEvent.target.closest('[data-close-field-photo]')) dialog.close();
+      const zoomButton = clickEvent.target.closest('[data-photo-zoom]');
+      if (zoomButton) {
+        zoom = Math.max(0.5, Math.min(3, zoom + (zoomButton.dataset.photoZoom === '+' ? 0.25 : -0.25)));
+        const image = dialog.querySelector('.field-photo-large');
+        if (image) image.style.transform = `scale(${zoom})`;
+      }
+      const otherPhoto = clickEvent.target.closest('[data-dialog-photo]');
+      if (otherPhoto) renderModalPhoto(Number(otherPhoto.dataset.dialogPhoto));
+    };
+    dialog.addEventListener('click', dialog.onClickHandler, { once: false });
+    dialog.addEventListener('close', () => {
+      dialog.removeEventListener('click', dialog.onClickHandler);
+      dialog.onClickHandler = null;
+    }, { once: true });
+    return;
+  }
+  const openReportButton = event.target.closest('[data-open-field-report]');
+  if (openReportButton) {
+    setFieldTab('gallery');
+    document.querySelector(`[data-field-report="${Number(openReportButton.dataset.openFieldReport)}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return;
+  }
+
   const indicatorCard = event.target.closest('[data-dashboard-detail]');
   if (indicatorCard) {
     await openIndicatorDetails(indicatorCard.dataset.dashboardDetail);

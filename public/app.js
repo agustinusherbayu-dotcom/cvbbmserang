@@ -104,7 +104,7 @@ function validateUploadSize(form) {
 function renderSummaryCards(data) {
   const summaryGrid = document.getElementById('summaryGrid');
   const isDirector = state.user?.role === 'DIREKTUR';
-  const canViewFinance = ['DIREKTUR', 'KOMISARIS'].includes(state.user?.role);
+  const canViewFinance = ['DIREKTUR', 'MANAGER', 'KOMISARIS'].includes(state.user?.role);
   document.getElementById('companyDashboardContent').classList.toggle('hidden', !canViewFinance);
   document.getElementById('employeeDashboardNote').classList.toggle('hidden', canViewFinance);
   document.getElementById('directorQuickActions').classList.toggle('hidden', !isDirector);
@@ -215,7 +215,7 @@ async function openIndicatorDetails(key) {
   const dialog = document.getElementById('indicatorDialog');
   const title = document.getElementById('indicatorDialogTitle');
   const content = document.getElementById('indicatorDialogContent');
-  const canViewFinance = ['DIREKTUR', 'KOMISARIS'].includes(state.user?.role);
+  const canViewFinance = ['DIREKTUR', 'MANAGER', 'KOMISARIS'].includes(state.user?.role);
   const labels = {
     balance: 'Total Saldo',
     income: 'Total Pemasukan',
@@ -321,14 +321,22 @@ function renderRecentActivity(activities) {
 
 function renderFinanceTable(transactions) {
   const target = document.getElementById('financeTable');
+  const canEdit = ['DIREKTUR', 'MANAGER'].includes(state.user?.role);
+  const canDelete = state.user?.role === 'DIREKTUR';
   const rows = (transactions || []).map(tx => `
     <div class="table-row">
       <span>${escapeHtml(tx.project_name)}</span>
-      <span><span class="tag ${tx.type}">${tx.type === 'income' ? 'Pemasukan' : 'Pengeluaran'}</span></span>
+      <span><span class="tag ${tx.archived_at ? 'inactive' : tx.type}">${tx.archived_at ? 'Diarsipkan' : tx.type === 'income' ? 'Pemasukan' : 'Pengeluaran'}</span></span>
       <span>${formatCurrency(tx.amount)}</span>
       <span>${escapeHtml(tx.counterparty)}</span>
       <span>${escapeHtml(tx.created_by_name ?? '-')}</span>
-      <span>${tx.has_attachment ? `<a href="/api/transactions/${Number(tx.id)}/attachment" target="_blank" rel="noreferrer">Buka lampiran</a>` : 'Tanpa lampiran'}</span>
+      <span>${tx.archived_at ? 'Lampiran tersimpan' : tx.has_attachment ? `<a href="/api/transactions/${Number(tx.id)}/attachment" target="_blank" rel="noreferrer">Buka lampiran</a>` : 'Tanpa lampiran'}</span>
+      ${canEdit || canDelete ? `<span class="inline-actions">
+        ${tx.archived_at
+          ? canDelete ? `<button class="mini-btn" type="button" data-restore-transaction="${Number(tx.id)}">Pulihkan</button>` : ''
+          : `${canEdit ? `<button class="mini-btn" type="button" data-edit-transaction="${Number(tx.id)}">Edit</button>` : ''}
+             ${canDelete ? `<button class="mini-btn danger" type="button" data-delete-transaction="${Number(tx.id)}">Arsipkan</button>` : ''}`}
+      </span>` : ''}
     </div>
   `).join('');
   target.innerHTML = rows || '<p>Belum ada transaksi.</p>';
@@ -337,6 +345,7 @@ function renderFinanceTable(transactions) {
 function renderTaskTable(tasks) {
   const target = document.getElementById('taskTable');
   const canVerify = state.user?.role === 'DIREKTUR';
+  const isDirector = canVerify;
   const isEmployee = state.user?.role === 'KARYAWAN';
   document.getElementById('taskListHeading').textContent = canVerify ? 'Semua pekerjaan' : 'Pekerjaan saya';
 
@@ -348,14 +357,14 @@ function renderTaskTable(tasks) {
       approved: 'Disetujui',
       rejected: 'Perlu diperbaiki'
     };
-    const status = ['pending', 'in_review', 'approved', 'rejected'].includes(task.status) ? task.status : 'pending';
+    const status = task.archived_at ? 'archived' : ['pending', 'in_review', 'approved', 'rejected'].includes(task.status) ? task.status : 'pending';
     const verificationActions = canVerify && status === 'in_review'
       ? `<div class="inline-actions task-verification-actions">
           <button class="mini-btn success" data-task-action="approved" data-task-id="${Number(task.id)}" data-task-bonus="${Number(task.bonus_amount || 0)}">Setujui hasil</button>
           <button class="mini-btn danger" data-task-action="rejected" data-task-id="${Number(task.id)}">Minta perbaikan</button>
         </div>`
       : '';
-    const progressForm = !canVerify && !['approved', 'in_review'].includes(status)
+    const progressForm = !canVerify && !['approved', 'in_review', 'archived'].includes(status)
       ? `<form class="task-progress-form" data-progress-form data-task-id="${Number(task.id)}">
           <label>
             <span>Progres saat ini (%)</span>
@@ -375,6 +384,14 @@ function renderTaskTable(tasks) {
     const reviewNote = !canVerify && status === 'in_review'
       ? '<p class="task-waiting-review">Hasil sudah dikirim untuk diperiksa. Anda dapat memperbarui pekerjaan setelah mendapat keputusan Direktur.</p>'
       : '';
+    const directorActions = isDirector ? `
+      <div class="inline-actions">
+        ${task.archived_at
+          ? `<button class="mini-btn success" type="button" data-task-archive="restore" data-task-id="${Number(task.id)}">Pulihkan</button>`
+          : `<button class="mini-btn" type="button" data-edit-task="${Number(task.id)}">Edit</button>
+             <button class="mini-btn danger" type="button" data-task-archive="archive" data-task-id="${Number(task.id)}">Arsipkan</button>`}
+      </div>
+    ` : '';
 
     return `
       <article class="task-card">
@@ -383,7 +400,7 @@ function renderTaskTable(tasks) {
             <h4>${escapeHtml(task.title)}</h4>
             ${canVerify ? `<p class="task-assignee">Ditugaskan kepada ${escapeHtml(task.assignee_name || '-')}</p>` : ''}
           </div>
-          <span class="tag ${status}">${statusLabels[status]}</span>
+          <span class="tag ${status}">${status === 'archived' ? 'Diarsipkan' : statusLabels[status]}</span>
         </div>
         ${task.description ? `<p class="task-description">${escapeHtml(task.description)}</p>` : ''}
         <div class="task-progress-heading">
@@ -406,6 +423,7 @@ function renderTaskTable(tasks) {
         ${progressForm}
         ${reviewNote}
         ${verificationActions}
+        ${directorActions}
       </article>
     `;
   }).join('');
@@ -486,12 +504,19 @@ async function exportExcel() {
 
 function renderDocumentTable(documents) {
   const target = document.getElementById('documentTable');
+  const isDirector = state.user?.role === 'DIREKTUR';
   const rows = (documents || []).map(doc => `
     <div class="table-row">
-      <span>${escapeHtml(doc.title)}</span>
+      <span>${escapeHtml(doc.title)}${doc.archived_at ? ' · Diarsipkan' : ''}</span>
       <span>${escapeHtml(doc.category)}</span>
       <span>${escapeHtml(doc.uploaded_by_name || '-')}</span>
-      <span>${doc.has_file ? `<a href="/api/documents/${Number(doc.id)}/download" target="_blank" rel="noreferrer">Buka file</a>` : 'Tanpa file'}</span>
+      <span>${doc.archived_at ? 'File tersimpan' : doc.has_file ? `<a href="/api/documents/${Number(doc.id)}/download" target="_blank" rel="noreferrer">Buka file</a>` : 'Tanpa file'}</span>
+      ${isDirector ? `<span class="inline-actions">
+        ${doc.archived_at
+          ? `<button class="mini-btn" type="button" data-restore-document="${Number(doc.id)}">Pulihkan</button>`
+          : `<button class="mini-btn" type="button" data-edit-document="${Number(doc.id)}">Edit</button>
+             <button class="mini-btn danger" type="button" data-archive-document="${Number(doc.id)}">Arsipkan</button>`}
+      </span>` : ''}
     </div>
   `).join('');
   target.innerHTML = rows || '<p>Belum ada dokumen.</p>';
@@ -521,12 +546,16 @@ function renderBonusSummary(rows) {
 
 function renderBonusTable(rows) {
   const target = document.getElementById('bonusTable');
+  const canEdit = state.user?.role === 'DIREKTUR';
   const tableRows = (rows || []).map(row => `
     <div class="table-row">
       <span>${escapeHtml(row.title)}</span>
       <span>${escapeHtml(row.assignee_name || '-')}</span>
-      <span>${formatCurrency(row.bonus_amount || 0)}</span>
+      <span>${canEdit
+        ? `<input type="number" min="0" step="0.01" value="${Number(row.bonus_amount || 0)}" data-bonus-amount="${Number(row.id)}" aria-label="Nominal bonus ${escapeHtml(row.title)}" />`
+        : formatCurrency(row.bonus_amount || 0)}</span>
       <span><span class="tag ${row.status || 'pending'}">${row.status || 'pending'}</span></span>
+      ${canEdit ? `<span><button class="mini-btn" type="button" data-save-bonus="${Number(row.id)}">Simpan bonus</button></span>` : ''}
     </div>
   `).join('');
 
@@ -725,6 +754,7 @@ function renderPurchaseRequestRows() {
   if (!state.procurement) return;
   const canApprove = ['DIREKTUR', 'MANAGER'].includes(state.user?.role);
   const canManage = canApprove;
+  const isDirector = state.user?.role === 'DIREKTUR';
   const currentUserId = String(state.user?.id || '');
   const rows = state.procurement.requests.map((request) => {
     const isPending = ['submitted', 'under_review'].includes(request.status);
@@ -769,6 +799,12 @@ function renderPurchaseRequestRows() {
         </form>
       </details>
     ` : '';
+    const directorActions = isDirector && !['converted_to_po', 'cancelled'].includes(request.status) ? `
+      <span class="inline-actions">
+        <button class="mini-btn" type="button" data-edit-request="${Number(request.id)}">Edit PR</button>
+        <button class="mini-btn danger" type="button" data-cancel-request="${Number(request.id)}">Batalkan PR</button>
+      </span>
+    ` : '';
     const statusLabel = {
       submitted: 'Menunggu persetujuan',
       under_review: 'Sedang ditinjau',
@@ -796,6 +832,7 @@ function renderPurchaseRequestRows() {
         ${request.rejection_reason ? `<p class="procurement-rejection">Alasan penolakan: ${escapeHtml(request.rejection_reason)}</p>` : ''}
         <div class="procurement-approval-history">${history || '<small>Belum ada riwayat persetujuan.</small>'}</div>
         ${actions}
+        ${directorActions}
         ${quotationForm}
       </article>
     `;
@@ -817,6 +854,7 @@ function renderQuotationRows() {
     );
     const expired = quotation.valid_until
       && new Date(`${String(quotation.valid_until).slice(0, 10)}T00:00:00`) < new Date(new Date().toDateString());
+    const isDirector = state.user?.role === 'DIREKTUR';
     const canCreateOrder = canManage && request?.status === 'approved'
       && quotation.status === 'available' && !expired && !activeOrder;
     const statusLabel = quotation.status === 'selected'
@@ -837,6 +875,27 @@ function renderQuotationRows() {
           estimated_unit_price: item.unit_price
         })))}</p>
         ${quotation.notes ? `<p>${escapeHtml(quotation.notes)}</p>` : ''}
+        ${isDirector && quotation.status !== 'selected' && !activeOrder ? `
+          <details class="quotation-entry">
+            <summary>Edit penawaran</summary>
+            <form class="transaction-form" data-quotation-edit-form data-quotation-id="${Number(quotation.id)}">
+              <div class="form-grid">
+                <label><span>Supplier</span><select name="supplier_id" required>
+                  ${state.procurement.suppliers.filter((supplier) => supplier.is_active).map((supplier) => `<option value="${Number(supplier.id)}" ${Number(supplier.id) === Number(quotation.supplier_id) ? 'selected' : ''}>${escapeHtml(supplier.supplier_code)} · ${escapeHtml(supplier.company_name)}</option>`).join('')}
+                </select></label>
+                <label><span>Nomor penawaran</span><input name="supplier_quote_number" maxlength="100" value="${escapeHtml(quotation.supplier_quote_number || '')}" /></label>
+                <label><span>Berlaku sampai</span><input name="valid_until" type="date" value="${escapeHtml(quotation.valid_until ? String(quotation.valid_until).slice(0, 10) : '')}" /></label>
+              </div>
+              <div class="procurement-lines">${(quotation.items || []).map((item) => `
+                <label class="quotation-price-line"><span>${escapeHtml(item.item_name)} · ${escapeHtml(item.quantity)} ${escapeHtml(item.unit)}</span>
+                  <input data-quote-price="${Number(item.request_item_id)}" type="number" min="0" step="0.01" value="${escapeHtml(item.unit_price)}" required />
+                </label>`).join('')}
+              </div>
+              <label><span>Catatan penawaran</span><textarea name="notes" rows="2" maxlength="1000">${escapeHtml(quotation.notes || '')}</textarea></label>
+              <button class="mini-btn success" type="submit">Simpan Perubahan Penawaran</button>
+            </form>
+          </details>
+        ` : ''}
         ${canCreateOrder ? `<button class="mini-btn success" type="button" data-create-po data-request-id="${Number(quotation.request_id)}" data-quotation-id="${Number(quotation.id)}">Buat PO dari Penawaran</button>` : ''}
       </article>
     `;
@@ -876,6 +935,7 @@ function renderPurchaseOrderRows() {
             <button class="mini-btn danger" type="button" data-po-decision="rejected" data-id="${Number(order.id)}">Tolak PO</button>
           </span>
         ` : ''}
+        ${isDirector && ['pending_approval', 'issued'].includes(order.status) ? `<button class="mini-btn danger" type="button" data-cancel-order="${Number(order.id)}">Batalkan PO</button>` : ''}
       </article>
     `;
   }).join('');
@@ -885,7 +945,7 @@ function renderPurchaseOrderRows() {
 function getAllowedViews(role) {
   const map = {
     DIREKTUR: ['dashboard', 'finance', 'inventory', 'procurement', 'documents', 'bonus', 'tasks', 'users', 'audit'],
-    MANAGER: ['dashboard', 'inventory', 'procurement', 'bonus', 'tasks'],
+    MANAGER: ['dashboard', 'finance', 'inventory', 'procurement', 'bonus', 'tasks'],
     KOMISARIS: ['dashboard', 'finance', 'inventory', 'procurement', 'bonus', 'tasks'],
     KARYAWAN: ['dashboard', 'procurement', 'bonus', 'tasks']
   };
@@ -910,7 +970,7 @@ function applyRolePermissions() {
   const documentForm = document.getElementById('documentForm');
 
   document.querySelectorAll('[data-finance-write]').forEach((section) => {
-    section.hidden = !isDirector;
+    section.hidden = !['DIREKTUR', 'MANAGER'].includes(role);
   });
   document.getElementById('financeReadOnlyNote').hidden = role !== 'KOMISARIS';
   document.querySelectorAll('[data-inventory-write]').forEach((section) => {
@@ -923,8 +983,8 @@ function applyRolePermissions() {
     section.hidden = !isDirector;
   });
   document.getElementById('directorQuickActions').classList.toggle('hidden', !isDirector);
-  document.getElementById('companyDashboardContent').classList.toggle('hidden', !['DIREKTUR', 'KOMISARIS'].includes(role));
-  document.getElementById('employeeDashboardNote').classList.toggle('hidden', ['DIREKTUR', 'KOMISARIS'].includes(role));
+  document.getElementById('companyDashboardContent').classList.toggle('hidden', !['DIREKTUR', 'MANAGER', 'KOMISARIS'].includes(role));
+  document.getElementById('employeeDashboardNote').classList.toggle('hidden', ['DIREKTUR', 'MANAGER', 'KOMISARIS'].includes(role));
 
   if (financeView) {
     financeView.style.display = allowed.includes('finance') ? 'block' : 'none';
@@ -932,7 +992,7 @@ function applyRolePermissions() {
 
   if (transactionForm) {
     transactionForm.querySelectorAll('input, select, textarea, button').forEach((element) => {
-      element.disabled = !isDirector;
+      element.disabled = !['DIREKTUR', 'MANAGER'].includes(role);
     });
   }
 
@@ -1366,22 +1426,29 @@ document.addEventListener('submit', async (event) => {
 
 document.addEventListener('submit', async (event) => {
   const quotationForm = event.target.closest('[data-quotation-form]');
-  if (!quotationForm) return;
+  const quotationEditForm = event.target.closest('[data-quotation-edit-form]');
+  if (!quotationForm && !quotationEditForm) return;
   event.preventDefault();
-  const button = quotationForm.querySelector('button[type="submit"]');
+  const form = quotationForm || quotationEditForm;
+  const button = form.querySelector('button[type="submit"]');
   button.disabled = true;
-  const values = Object.fromEntries(new FormData(quotationForm).entries());
-  values.items = [...quotationForm.querySelectorAll('[data-quote-price]')].map((input) => ({
+  const values = Object.fromEntries(new FormData(form).entries());
+  values.items = [...form.querySelectorAll('[data-quote-price]')].map((input) => ({
     request_item_id: Number(input.dataset.quotePrice),
     unit_price: input.value
   }));
   try {
-    await apiFetch(`/api/procurement/requests/${Number(quotationForm.dataset.requestId)}/quotations`, {
-      method: 'POST',
+    await apiFetch(
+      quotationEditForm
+        ? `/api/procurement/quotations/${Number(quotationEditForm.dataset.quotationId)}`
+        : `/api/procurement/requests/${Number(quotationForm.dataset.requestId)}/quotations`,
+      {
+      method: quotationEditForm ? 'PATCH' : 'POST',
       body: JSON.stringify(values)
-    });
+      }
+    );
     await refreshData();
-    alert('Penawaran supplier berhasil dicatat.');
+    alert(quotationEditForm ? 'Penawaran supplier berhasil diperbarui.' : 'Penawaran supplier berhasil dicatat.');
   } catch (error) {
     alert(error.message);
   } finally {
@@ -1391,6 +1458,14 @@ document.addEventListener('submit', async (event) => {
 
 const transactionForm = document.getElementById('transactionForm');
 const transactionDateInput = transactionForm.elements.date;
+const resetTransactionForm = () => {
+  transactionForm.reset();
+  transactionForm.elements.transaction_id.value = '';
+  document.getElementById('transactionFormHeading').textContent = 'Input Transaksi';
+  transactionForm.querySelector('button[type="submit"]').textContent = 'Simpan Catatan';
+  document.getElementById('cancelTransactionEdit').hidden = true;
+  setTransactionDateToday();
+};
 const setTransactionDateToday = () => {
   const today = new Date();
   const localDate = new Date(today.getTime() - today.getTimezoneOffset() * 60000)
@@ -1406,21 +1481,96 @@ transactionForm.addEventListener('submit', async (event) => {
   const form = event.currentTarget;
   if (!validateUploadSize(form)) return;
   const formData = new FormData(form);
+  const transactionId = form.elements.transaction_id.value;
+  formData.delete('transaction_id');
+  formData.set('category', form.querySelector('.transaction-quick-grid [name="category"]').value);
+  formData.set('project_name', form.querySelector('.transaction-quick-grid [name="project_name"]').value);
+  if (!form.querySelector('[name="attachment"]').files.length) formData.delete('attachment');
   const submitButton = form.querySelector('button[type="submit"]');
   submitButton.disabled = true;
 
   try {
-    await apiFetch('/api/transactions', {
-      method: 'POST',
+    const result = await apiFetch(
+      transactionId ? `/api/transactions/${Number(transactionId)}` : '/api/transactions',
+      {
+      method: transactionId ? 'PATCH' : 'POST',
       body: formData
-    });
-    form.reset();
-    setTransactionDateToday();
+      }
+    );
+    resetTransactionForm();
     await refreshData();
+    if (result.warning) alert(result.warning);
+    else if (transactionId) alert('Transaksi berhasil diperbarui.');
   } catch (error) {
     alert(error.message);
   } finally {
     submitButton.disabled = false;
+  }
+});
+
+document.getElementById('cancelTransactionEdit').addEventListener('click', resetTransactionForm);
+
+document.addEventListener('click', async (event) => {
+  const editButton = event.target.closest('[data-edit-transaction]');
+  if (editButton) {
+    const transaction = state.transactions.find(
+      (entry) => Number(entry.id) === Number(editButton.dataset.editTransaction)
+    );
+    if (!transaction) return;
+    transactionForm.elements.transaction_id.value = String(transaction.id);
+    transactionForm.elements.type.value = transaction.type;
+    transactionForm.elements.date.value = String(transaction.date).slice(0, 10);
+    transactionForm.querySelectorAll('[name="category"]').forEach((input) => {
+      input.value = transaction.category || '';
+    });
+    transactionForm.querySelectorAll('[name="project_name"]').forEach((input) => {
+      input.value = transaction.project_name || '';
+    });
+    transactionForm.elements.description.value = transaction.description || '';
+    transactionForm.elements.amount.value = transaction.amount;
+    transactionForm.elements.payment_method.value = transaction.payment_method || '';
+    transactionForm.elements.counterparty.value = transaction.counterparty || '';
+    transactionForm.elements.attachment.value = '';
+    document.getElementById('transactionFormHeading').textContent = `Edit Transaksi #${transaction.id}`;
+    transactionForm.querySelector('button[type="submit"]').textContent = 'Simpan Perubahan';
+    document.getElementById('cancelTransactionEdit').hidden = false;
+    transactionForm.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return;
+  }
+
+  const restoreButton = event.target.closest('[data-restore-transaction]');
+  if (restoreButton) {
+    restoreButton.disabled = true;
+    try {
+      await apiFetch(`/api/transactions/${Number(restoreButton.dataset.restoreTransaction)}/restore`, {
+        method: 'POST'
+      });
+      await refreshData();
+    } catch (error) {
+      alert(error.message);
+    } finally {
+      restoreButton.disabled = false;
+    }
+    return;
+  }
+
+  const deleteButton = event.target.closest('[data-delete-transaction]');
+  if (!deleteButton) return;
+  if (!window.confirm('Arsipkan transaksi ini? Data dan lampiran tetap tersimpan dan dapat dipulihkan Direktur.')) return;
+  deleteButton.disabled = true;
+  try {
+    const result = await apiFetch(`/api/transactions/${Number(deleteButton.dataset.deleteTransaction)}`, {
+      method: 'DELETE'
+    });
+    if (transactionForm.elements.transaction_id.value === deleteButton.dataset.deleteTransaction) {
+      resetTransactionForm();
+    }
+    await refreshData();
+    if (result.warning) alert(result.warning);
+  } catch (error) {
+    alert(error.message);
+  } finally {
+    deleteButton.disabled = false;
   }
 });
 
@@ -1491,6 +1641,8 @@ purchaseRequestForm.addEventListener('submit', async (event) => {
   const button = form.querySelector('button[type="submit"]');
   button.disabled = true;
   const values = Object.fromEntries(new FormData(form).entries());
+  const requestId = values.request_id;
+  delete values.request_id;
   values.items = [...purchaseRequestItems.querySelectorAll('[data-request-line]')].map((row) => ({
     item_name: row.querySelector('[data-line-name]').value,
     quantity: row.querySelector('[data-line-quantity]').value,
@@ -1498,11 +1650,17 @@ purchaseRequestForm.addEventListener('submit', async (event) => {
     estimated_unit_price: row.querySelector('[data-line-price]').value
   }));
   try {
-    const result = await apiFetch('/api/procurement/requests', {
-      method: 'POST',
+    const result = await apiFetch(
+      requestId ? `/api/procurement/requests/${Number(requestId)}` : '/api/procurement/requests',
+      {
+      method: requestId ? 'PATCH' : 'POST',
       body: JSON.stringify(values)
-    });
+      }
+    );
     form.reset();
+    form.elements.request_id.value = '';
+    document.getElementById('purchaseRequestSubmit').textContent = 'Ajukan PR';
+    document.getElementById('cancelPurchaseRequestEdit').hidden = true;
     purchaseRequestItems.innerHTML = `
       <div class="procurement-line" data-request-line>
         <label><span>Nama barang</span><input data-line-name maxlength="160" required /></label>
@@ -1513,12 +1671,29 @@ purchaseRequestForm.addEventListener('submit', async (event) => {
       </div>
     `;
     await refreshData();
-    alert(`PR ${result.request_number} berhasil diajukan.`);
+    alert(requestId ? 'PR diperbarui dan dikembalikan ke status menunggu persetujuan.' : `PR ${result.request_number} berhasil diajukan.`);
   } catch (error) {
     alert(error.message);
   } finally {
     button.disabled = false;
   }
+});
+
+document.getElementById('cancelPurchaseRequestEdit').addEventListener('click', () => {
+  const form = document.getElementById('purchaseRequestForm');
+  form.reset();
+  form.elements.request_id.value = '';
+  purchaseRequestItems.innerHTML = `
+    <div class="procurement-line" data-request-line>
+      <label><span>Nama barang</span><input data-line-name maxlength="160" required /></label>
+      <label><span>Jumlah</span><input data-line-quantity type="number" min="0.000001" step="0.000001" required /></label>
+      <label><span>Satuan</span><input data-line-unit maxlength="20" placeholder="Kg / unit..." required /></label>
+      <label><span>Harga estimasi per satuan</span><input data-line-price type="number" min="0" step="0.01" value="0" required /></label>
+      <button class="mini-btn danger" type="button" data-remove-request-line hidden>Hapus</button>
+    </div>
+  `;
+  document.getElementById('purchaseRequestSubmit').textContent = 'Ajukan PR';
+  document.getElementById('cancelPurchaseRequestEdit').hidden = true;
 });
 
 procurementLimitForm.addEventListener('submit', async (event) => {
@@ -1542,6 +1717,50 @@ procurementLimitForm.addEventListener('submit', async (event) => {
 });
 
 document.addEventListener('click', async (event) => {
+  const editRequestButton = event.target.closest('[data-edit-request]');
+  if (editRequestButton) {
+    const request = state.procurement?.requests.find((entry) => Number(entry.id) === Number(editRequestButton.dataset.editRequest));
+    if (!request) return;
+    const form = document.getElementById('purchaseRequestForm');
+    form.elements.request_id.value = String(request.id);
+    form.elements.division.value = request.division || '';
+    form.elements.category.value = request.category || '';
+    form.elements.urgency.value = request.urgency || 'normal';
+    form.elements.needed_by.value = request.needed_by ? String(request.needed_by).slice(0, 10) : '';
+    form.elements.project_name.value = request.project_name || '';
+    form.elements.reason.value = request.reason || '';
+    purchaseRequestItems.innerHTML = (request.items || []).map((item, index) => `
+      <div class="procurement-line" data-request-line>
+        <label><span>Nama barang</span><input data-line-name maxlength="160" required value="${escapeHtml(item.item_name)}" /></label>
+        <label><span>Jumlah</span><input data-line-quantity type="number" min="0.000001" step="0.000001" required value="${escapeHtml(item.quantity)}" /></label>
+        <label><span>Satuan</span><input data-line-unit maxlength="20" required value="${escapeHtml(item.unit)}" /></label>
+        <label><span>Harga estimasi per satuan</span><input data-line-price type="number" min="0" step="0.01" required value="${escapeHtml(item.estimated_unit_price)}" /></label>
+        <button class="mini-btn danger" type="button" data-remove-request-line ${index === 0 ? 'hidden' : ''}>Hapus</button>
+      </div>
+    `).join('');
+    document.getElementById('purchaseRequestSubmit').textContent = 'Simpan Perubahan PR';
+    document.getElementById('cancelPurchaseRequestEdit').hidden = false;
+    form.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return;
+  }
+
+  const cancelRequestButton = event.target.closest('[data-cancel-request]');
+  if (cancelRequestButton) {
+    if (!window.confirm('Batalkan PR ini? Riwayat dan barang PR tetap tersimpan.')) return;
+    cancelRequestButton.disabled = true;
+    try {
+      await apiFetch(`/api/procurement/requests/${Number(cancelRequestButton.dataset.cancelRequest)}/cancel`, {
+        method: 'POST'
+      });
+      await refreshData();
+    } catch (error) {
+      alert(error.message);
+    } finally {
+      cancelRequestButton.disabled = false;
+    }
+    return;
+  }
+
   const editSupplierButton = event.target.closest('[data-edit-supplier]');
   if (editSupplierButton) {
     const supplier = state.procurement?.suppliers.find(
@@ -1602,6 +1821,23 @@ document.addEventListener('click', async (event) => {
       alert(error.message);
     } finally {
       orderDecisionButton.disabled = false;
+    }
+    return;
+  }
+
+  const cancelOrderButton = event.target.closest('[data-cancel-order]');
+  if (cancelOrderButton) {
+    if (!window.confirm('Batalkan PO ini? Riwayat persetujuan akan tetap tersimpan.')) return;
+    cancelOrderButton.disabled = true;
+    try {
+      await apiFetch(`/api/procurement/purchase-orders/${Number(cancelOrderButton.dataset.cancelOrder)}/cancel`, {
+        method: 'POST'
+      });
+      await refreshData();
+    } catch (error) {
+      alert(error.message);
+    } finally {
+      cancelOrderButton.disabled = false;
     }
     return;
   }
@@ -1821,18 +2057,86 @@ inventoryEditForm.addEventListener('submit', async (event) => {
 document.getElementById('taskForm').addEventListener('submit', async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
-  const formData = new FormData(form);
-  const payload = Object.fromEntries(formData.entries());
-
+  const values = Object.fromEntries(new FormData(form).entries());
+  const taskId = values.task_id;
+  delete values.task_id;
+  const button = form.querySelector('button[type="submit"]');
+  button.disabled = true;
   try {
-    await apiFetch('/api/tasks', {
-      method: 'POST',
-      body: JSON.stringify(payload)
+    await apiFetch(taskId ? `/api/tasks/${Number(taskId)}` : '/api/tasks', {
+      method: taskId ? 'PATCH' : 'POST',
+      body: JSON.stringify(values)
     });
     form.reset();
     await refreshData();
+    button.textContent = 'Tugaskan pekerjaan';
+    document.getElementById('cancelTaskEdit').hidden = true;
   } catch (error) {
     alert(error.message);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+document.getElementById('cancelTaskEdit').addEventListener('click', () => {
+  const form = document.getElementById('taskForm');
+  form.reset();
+  form.elements.task_id.value = '';
+  document.getElementById('taskFormSubmit').textContent = 'Tugaskan pekerjaan';
+  document.getElementById('cancelTaskEdit').hidden = true;
+});
+
+document.addEventListener('click', async (event) => {
+  const editTaskButton = event.target.closest('[data-edit-task]');
+  if (editTaskButton) {
+    const task = state.tasks.find((entry) => Number(entry.id) === Number(editTaskButton.dataset.editTask));
+    if (!task) return;
+    const form = document.getElementById('taskForm');
+    form.elements.task_id.value = String(task.id);
+    form.elements.title.value = task.title;
+    form.elements.description.value = task.description || '';
+    form.elements.quantity.value = task.quantity;
+    form.elements.assignee_id.value = String(task.assignee_id);
+    document.getElementById('taskFormSubmit').textContent = 'Simpan Perubahan';
+    document.getElementById('cancelTaskEdit').hidden = false;
+    form.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return;
+  }
+
+  const archiveTaskButton = event.target.closest('[data-task-archive]');
+  if (archiveTaskButton) {
+    const archive = archiveTaskButton.dataset.taskArchive === 'archive';
+    if (archive && !window.confirm('Arsipkan pekerjaan ini? Riwayat dan bonus tetap tersimpan.')) return;
+    archiveTaskButton.disabled = true;
+    try {
+      await apiFetch(`/api/tasks/${Number(archiveTaskButton.dataset.taskId)}/archive`, {
+        method: 'POST',
+        body: JSON.stringify({ archived: archive })
+      });
+      await refreshData();
+    } catch (error) {
+      alert(error.message);
+    } finally {
+      archiveTaskButton.disabled = false;
+    }
+    return;
+  }
+
+  const saveBonusButton = event.target.closest('[data-save-bonus]');
+  if (!saveBonusButton) return;
+  const taskId = Number(saveBonusButton.dataset.saveBonus);
+  const input = document.querySelector(`[data-bonus-amount="${taskId}"]`);
+  saveBonusButton.disabled = true;
+  try {
+    await apiFetch(`/api/tasks/${taskId}/bonus`, {
+      method: 'PATCH',
+      body: JSON.stringify({ bonus_amount: input.value })
+    });
+    await refreshData();
+  } catch (error) {
+    alert(error.message);
+  } finally {
+    saveBonusButton.disabled = false;
   }
 });
 
@@ -1841,16 +2145,80 @@ document.getElementById('documentForm').addEventListener('submit', async (event)
   const form = event.currentTarget;
   if (!validateUploadSize(form)) return;
   const formData = new FormData(form);
-
+  const documentId = form.elements.document_id.value;
+  formData.delete('document_id');
+  if (!form.elements.attachment.files.length) formData.delete('attachment');
+  const button = form.querySelector('button[type="submit"]');
+  button.disabled = true;
   try {
-    await apiFetch('/api/documents', {
-      method: 'POST',
+    await apiFetch(documentId ? `/api/documents/${Number(documentId)}` : '/api/documents', {
+      method: documentId ? 'PATCH' : 'POST',
       body: formData
     });
     form.reset();
+    form.elements.document_id.value = '';
+    document.getElementById('documentFormSubmit').textContent = 'Simpan Dokumen';
+    document.getElementById('cancelDocumentEdit').hidden = true;
     await refreshData();
   } catch (error) {
     alert(error.message);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+document.getElementById('cancelDocumentEdit').addEventListener('click', () => {
+  const form = document.getElementById('documentForm');
+  form.reset();
+  form.elements.document_id.value = '';
+  document.getElementById('documentFormSubmit').textContent = 'Simpan Dokumen';
+  document.getElementById('cancelDocumentEdit').hidden = true;
+});
+
+document.addEventListener('click', async (event) => {
+  const editDocumentButton = event.target.closest('[data-edit-document]');
+  if (editDocumentButton) {
+    const doc = state.documents.find((entry) => Number(entry.id) === Number(editDocumentButton.dataset.editDocument));
+    if (!doc) return;
+    const form = document.getElementById('documentForm');
+    form.elements.document_id.value = String(doc.id);
+    form.elements.title.value = doc.title;
+    form.elements.category.value = doc.category;
+    form.elements.description.value = doc.description || '';
+    form.elements.attachment.value = '';
+    document.getElementById('documentFormSubmit').textContent = 'Simpan Perubahan';
+    document.getElementById('cancelDocumentEdit').hidden = false;
+    form.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return;
+  }
+  const restoreDocumentButton = event.target.closest('[data-restore-document]');
+  if (restoreDocumentButton) {
+    restoreDocumentButton.disabled = true;
+    try {
+      await apiFetch(`/api/documents/${Number(restoreDocumentButton.dataset.restoreDocument)}/restore`, {
+        method: 'POST'
+      });
+      await refreshData();
+    } catch (error) {
+      alert(error.message);
+    } finally {
+      restoreDocumentButton.disabled = false;
+    }
+    return;
+  }
+  const archiveDocumentButton = event.target.closest('[data-archive-document]');
+  if (!archiveDocumentButton) return;
+  if (!window.confirm('Arsipkan dokumen ini? Data dan file tetap tersimpan, tetapi tidak muncul pada daftar aktif.')) return;
+  archiveDocumentButton.disabled = true;
+  try {
+    await apiFetch(`/api/documents/${Number(archiveDocumentButton.dataset.archiveDocument)}/archive`, {
+      method: 'POST'
+    });
+    await refreshData();
+  } catch (error) {
+    alert(error.message);
+  } finally {
+    archiveDocumentButton.disabled = false;
   }
 });
 

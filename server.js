@@ -84,8 +84,10 @@ async function initializeDatabase() {
       attachment_name TEXT,
       attachment_mime TEXT,
       created_by BIGINT NOT NULL REFERENCES users(id),
+      archived_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
     ALTER TABLE transactions ADD COLUMN IF NOT EXISTS attachment_data BYTEA;
     ALTER TABLE transactions ADD COLUMN IF NOT EXISTS attachment_name TEXT;
     ALTER TABLE transactions ADD COLUMN IF NOT EXISTS attachment_mime TEXT;
@@ -103,9 +105,11 @@ async function initializeDatabase() {
       bonus_amount NUMERIC(16, 2) NOT NULL DEFAULT 0 CHECK (bonus_amount >= 0),
       created_by BIGINT NOT NULL REFERENCES users(id),
       verified_by BIGINT REFERENCES users(id),
+      archived_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+    ALTER TABLE tasks ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
     ALTER TABLE tasks ADD COLUMN IF NOT EXISTS progress_percent INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE tasks ADD COLUMN IF NOT EXISTS progress_note TEXT NOT NULL DEFAULT '';
     ALTER TABLE tasks ADD COLUMN IF NOT EXISTS result TEXT NOT NULL DEFAULT '';
@@ -130,8 +134,10 @@ async function initializeDatabase() {
       file_name TEXT,
       file_mime TEXT,
       uploaded_by BIGINT NOT NULL REFERENCES users(id),
+      archived_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+    ALTER TABLE documents ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
     ALTER TABLE documents ADD COLUMN IF NOT EXISTS file_data BYTEA;
     ALTER TABLE documents ADD COLUMN IF NOT EXISTS file_name TEXT;
     ALTER TABLE documents ADD COLUMN IF NOT EXISTS file_mime TEXT;
@@ -525,7 +531,7 @@ function sendStoredFile(res, file) {
 
 async function getDashboardData(user) {
   const isDirector = user.role === 'DIREKTUR';
-  const canViewFinance = ['DIREKTUR', 'KOMISARIS'].includes(user.role);
+  const canViewFinance = ['DIREKTUR', 'MANAGER', 'KOMISARIS'].includes(user.role);
   const transactions = canViewFinance
     ? (await pool.query(`
         SELECT t.id, t.type, t.date, t.category, t.project_name, t.description, t.amount,
@@ -534,6 +540,7 @@ async function getDashboardData(user) {
                u.name AS created_by_name
         FROM transactions t
         LEFT JOIN users u ON u.id = t.created_by
+        WHERE t.archived_at IS NULL
         ORDER BY t.date DESC, t.id DESC
       `)).rows
     : [];
@@ -543,6 +550,7 @@ async function getDashboardData(user) {
         FROM tasks t
         LEFT JOIN users u ON u.id = t.assignee_id
         LEFT JOIN users v ON v.id = t.verified_by
+        WHERE t.archived_at IS NULL
         ORDER BY t.created_at DESC
       `)).rows
     : (await pool.query(`
@@ -550,7 +558,7 @@ async function getDashboardData(user) {
         FROM tasks t
         LEFT JOIN users u ON u.id = t.assignee_id
         LEFT JOIN users v ON v.id = t.verified_by
-        WHERE t.assignee_id = $1
+        WHERE t.assignee_id = $1 AND t.archived_at IS NULL
         ORDER BY t.created_at DESC
       `, [user.id])).rows;
   const activities = isDirector
@@ -1758,6 +1766,144 @@ app.post('/api/procurement/requests', requireAuth, requireRole(...PROCUREMENT_WR
   }
 }));
 
+app.patch('/api/procurement/requests/:id', requireAuth, requireRole('DIREKTUR'), asyncRoute(async (req, res) => {
+  const requestId = Number(req.params.id);
+  const body = req.body || {};
+  const division = String(body.division || '').trim();
+  const category = String(body.category || '').trim();
+  const reason = String(body.reason || '').trim();
+  const urgency = String(body.urgency || 'normal');
+  const projectName = String(body.project_name || '').trim();
+  const neededBy = body.needed_by ? String(body.needed_by) : null;
+  const items = body.items;
+  if (!Number.isSafeInteger(requestId) || requestId <= 0
+    || division.length > 120 || category.length < 2 || category.length > 120
+    || reason.length < 3 || reason.length > 1500
+    || !['low', 'normal', 'high', 'urgent'].includes(urgency)
+    || projectName.length > 160 || (neededBy && !isValidIsoDate(neededBy))
+    || !Array.isArray(items) || items.length < 1 || items.length > 30) {
+    return res.status(400).json({ error: 'Data PR tidak lengkap atau tidak valid.' });
+  }
+  const normalizedItems = [];
+  for (const item of items) {
+    const itemName = String(item?.item_name || '').trim();
+    const unit = String(item?.unit || '').trim().toUpperCase();
+    const quantity = String(item?.quantity ?? '');
+    const price = String(item?.estimated_unit_price ?? '0');
+    const inventoryItemId = item?.inventory_item_id ? Number(item.inventory_item_id) : null;
+    if (itemName.length < 2 || itemName.length > 160 || !isValidInventoryUnit(unit)
+      || !isValidInventoryDecimal(quantity) || normalizeDecimal(quantity) === '0'
+      || !isValidInventoryDecimal(price, 2)
+      || (inventoryItemId !== null && (!Number.isSafeInteger(inventoryItemId) || inventoryItemId <= 0))) {
+      return res.status(400).json({ error: 'Setiap barang PR wajib memiliki nama, satuan, jumlah, dan estimasi harga yang valid.' });
+    }
+    normalizedItems.push({ itemName, unit, quantity, price, inventoryItemId });
+  }
+  const result = await withInventoryAudit(
+    req.session.user.id,
+    'PURCHASE_REQUEST_UPDATED',
+    `Updated purchase request #${requestId}.`,
+    req.ip,
+    async (client) => {
+      const request = await client.query(`
+        SELECT id, status FROM purchase_requests WHERE id = $1 FOR UPDATE
+      `, [requestId]);
+      if (!request.rowCount) {
+        const error = new Error('PR tidak ditemukan.');
+        error.status = 404;
+        throw error;
+      }
+      if (['converted_to_po', 'cancelled'].includes(request.rows[0].status)) {
+        const error = new Error('PR yang sudah menjadi PO atau dibatalkan tidak dapat diedit.');
+        error.status = 409;
+        throw error;
+      }
+      const [quotes, orders] = await Promise.all([
+        client.query('SELECT id FROM supplier_quotations WHERE request_id = $1 LIMIT 1', [requestId]),
+        client.query('SELECT id FROM purchase_orders WHERE request_id = $1 LIMIT 1', [requestId])
+      ]);
+      if (quotes.rowCount || orders.rowCount) {
+        const error = new Error('PR yang sudah memiliki penawaran atau riwayat PO tidak dapat mengubah daftar barang.');
+        error.status = 409;
+        throw error;
+      }
+      for (const item of normalizedItems) {
+        if (item.inventoryItemId === null) continue;
+        const inventoryItem = await client.query(`
+          SELECT base_unit, alternate_unit FROM inventory_items
+          WHERE id = $1 AND is_active = TRUE
+        `, [item.inventoryItemId]);
+        if (!inventoryItem.rowCount
+          || ![inventoryItem.rows[0].base_unit, inventoryItem.rows[0].alternate_unit].includes(item.unit)) {
+          const error = new Error('Barang inventory yang dipilih nonaktif atau satuannya tidak sesuai.');
+          error.status = 400;
+          throw error;
+        }
+      }
+      await client.query(`
+        UPDATE purchase_requests
+        SET division = $1, category = $2, reason = $3, urgency = $4, needed_by = $5::DATE,
+            project_name = $6, status = 'submitted', rejection_reason = '', reviewed_at = NULL,
+            updated_at = NOW()
+        WHERE id = $7
+      `, [division, category, reason, urgency, neededBy, projectName, requestId]);
+      await client.query('DELETE FROM purchase_request_items WHERE request_id = $1', [requestId]);
+      for (const item of normalizedItems) {
+        await client.query(`
+          INSERT INTO purchase_request_items (
+            request_id, inventory_item_id, item_name, quantity, unit, estimated_unit_price
+          )
+          VALUES ($1, $2, $3, $4::NUMERIC, $5, $6::NUMERIC)
+        `, [requestId, item.inventoryItemId, item.itemName, item.quantity, item.unit, item.price]);
+      }
+      return { rows: [{ id: requestId }] };
+    }
+  );
+  res.json({ success: true, id: result.rows[0].id, status: 'submitted' });
+}));
+
+app.post('/api/procurement/requests/:id/cancel', requireAuth, requireRole('DIREKTUR'), asyncRoute(async (req, res) => {
+  const requestId = Number(req.params.id);
+  if (!Number.isSafeInteger(requestId) || requestId <= 0) {
+    return res.status(400).json({ error: 'ID PR tidak valid.' });
+  }
+  await withInventoryAudit(
+    req.session.user.id,
+    'PURCHASE_REQUEST_CANCELLED',
+    `Cancelled purchase request #${requestId}.`,
+    req.ip,
+    async (client) => {
+      const request = await client.query(`
+        SELECT status FROM purchase_requests WHERE id = $1 FOR UPDATE
+      `, [requestId]);
+      if (!request.rowCount) {
+        const error = new Error('PR tidak ditemukan.');
+        error.status = 404;
+        throw error;
+      }
+      if (['converted_to_po', 'cancelled'].includes(request.rows[0].status)) {
+        const error = new Error('PR ini sudah menjadi PO atau sudah dibatalkan.');
+        error.status = 409;
+        throw error;
+      }
+      const activeOrder = await client.query(`
+        SELECT id FROM purchase_orders
+        WHERE request_id = $1 AND status IN ('pending_approval', 'issued')
+      `, [requestId]);
+      if (activeOrder.rowCount) {
+        const error = new Error('Batalkan PO aktif terlebih dahulu sebelum membatalkan PR.');
+        error.status = 409;
+        throw error;
+      }
+      return client.query(`
+        UPDATE purchase_requests SET status = 'cancelled', updated_at = NOW()
+        WHERE id = $1 RETURNING id
+      `, [requestId]);
+    }
+  );
+  res.json({ success: true, status: 'cancelled' });
+}));
+
 app.post('/api/procurement/requests/:id/decision', requireAuth, requireRole(...PROCUREMENT_APPROVER_ROLES), asyncRoute(async (req, res) => {
   const requestId = Number(req.params.id);
   const decision = String(req.body?.decision || '');
@@ -1944,6 +2090,92 @@ app.post('/api/procurement/requests/:id/quotations', requireAuth, requireRole('D
     }
   );
   res.status(201).json({ success: true, id: result.rows[0].id });
+}));
+
+app.patch('/api/procurement/quotations/:id', requireAuth, requireRole('DIREKTUR'), asyncRoute(async (req, res) => {
+  const quotationId = Number(req.params.id);
+  const supplierId = Number(req.body?.supplier_id);
+  const quoteNumber = String(req.body?.supplier_quote_number || '').trim();
+  const validUntil = req.body?.valid_until ? String(req.body.valid_until) : null;
+  const notes = String(req.body?.notes || '').trim();
+  const items = req.body?.items;
+  if (!Number.isSafeInteger(quotationId) || quotationId <= 0
+    || !Number.isSafeInteger(supplierId) || supplierId <= 0
+    || quoteNumber.length > 100 || (validUntil && !isValidIsoDate(validUntil))
+    || notes.length > 1000 || !Array.isArray(items) || items.length < 1 || items.length > 30) {
+    return res.status(400).json({ error: 'Data penawaran tidak lengkap atau tidak valid.' });
+  }
+  const itemPrices = new Map();
+  for (const item of items) {
+    const requestItemId = Number(item?.request_item_id);
+    const unitPrice = String(item?.unit_price ?? '');
+    if (!Number.isSafeInteger(requestItemId) || requestItemId <= 0
+      || itemPrices.has(requestItemId) || !isValidInventoryDecimal(unitPrice, 2)) {
+      return res.status(400).json({ error: 'Barang atau harga penawaran tidak valid.' });
+    }
+    itemPrices.set(requestItemId, unitPrice);
+  }
+  await withInventoryAudit(
+    req.session.user.id,
+    'SUPPLIER_QUOTATION_UPDATED',
+    `Updated supplier quotation #${quotationId}.`,
+    req.ip,
+    async (client) => {
+      const quotation = await client.query(`
+        SELECT request_id, status FROM supplier_quotations WHERE id = $1 FOR UPDATE
+      `, [quotationId]);
+      if (!quotation.rowCount) {
+        const error = new Error('Penawaran tidak ditemukan.');
+        error.status = 404;
+        throw error;
+      }
+      if (quotation.rows[0].status === 'selected') {
+        const error = new Error('Penawaran yang sudah dipilih untuk PO tidak dapat diedit.');
+        error.status = 409;
+        throw error;
+      }
+      const order = await client.query(`
+        SELECT id FROM purchase_orders
+        WHERE request_id = $1 AND status IN ('pending_approval', 'issued')
+      `, [quotation.rows[0].request_id]);
+      if (order.rowCount) {
+        const error = new Error('Penawaran untuk PR dengan PO aktif tidak dapat diedit.');
+        error.status = 409;
+        throw error;
+      }
+      const supplier = await client.query(`
+        SELECT id FROM suppliers WHERE id = $1 AND is_active = TRUE
+      `, [supplierId]);
+      if (!supplier.rowCount) {
+        const error = new Error('Supplier tidak ditemukan atau sedang nonaktif.');
+        error.status = 400;
+        throw error;
+      }
+      const requestedItems = await client.query(`
+        SELECT id, item_name, quantity::TEXT, unit FROM purchase_request_items
+        WHERE request_id = $1 ORDER BY id
+      `, [quotation.rows[0].request_id]);
+      if (requestedItems.rowCount !== itemPrices.size
+        || requestedItems.rows.some((item) => !itemPrices.has(Number(item.id)))) {
+        const error = new Error('Penawaran harus tetap memuat harga untuk seluruh barang pada PR.');
+        error.status = 400;
+        throw error;
+      }
+      await client.query(`
+        UPDATE supplier_quotations
+        SET supplier_id = $1, supplier_quote_number = $2, valid_until = $3::DATE,
+            notes = $4, status = 'available', updated_at = NOW()
+        WHERE id = $5
+      `, [supplierId, quoteNumber, validUntil, notes, quotationId]);
+      for (const item of requestedItems.rows) {
+        await client.query(`
+          UPDATE supplier_quotation_items SET unit_price = $1::NUMERIC
+          WHERE quotation_id = $2 AND request_item_id = $3
+        `, [itemPrices.get(Number(item.id)), quotationId, item.id]);
+      }
+    }
+  );
+  res.json({ success: true });
 }));
 
 app.post('/api/procurement/requests/:id/purchase-orders', requireAuth, requireRole('DIREKTUR', 'MANAGER'), asyncRoute(async (req, res) => {
@@ -2143,11 +2375,54 @@ app.post('/api/procurement/purchase-orders/:id/decision', requireAuth, requireRo
   }
 }));
 
+app.post('/api/procurement/purchase-orders/:id/cancel', requireAuth, requireRole('DIREKTUR'), asyncRoute(async (req, res) => {
+  const orderId = Number(req.params.id);
+  if (!Number.isSafeInteger(orderId) || orderId <= 0) {
+    return res.status(400).json({ error: 'ID PO tidak valid.' });
+  }
+  await withInventoryAudit(
+    req.session.user.id,
+    'PURCHASE_ORDER_CANCELLED',
+    (order) => `Cancelled purchase order ${order.po_number}.`,
+    req.ip,
+    async (client) => {
+      const order = await client.query(`
+        SELECT request_id, quotation_id, status, po_number
+        FROM purchase_orders WHERE id = $1 FOR UPDATE
+      `, [orderId]);
+      if (!order.rowCount) {
+        const error = new Error('PO tidak ditemukan.');
+        error.status = 404;
+        throw error;
+      }
+      if (!['pending_approval', 'issued'].includes(order.rows[0].status)) {
+        const error = new Error('Hanya PO aktif yang dapat dibatalkan.');
+        error.status = 409;
+        throw error;
+      }
+      await client.query(`
+        UPDATE purchase_orders SET status = 'cancelled', updated_at = NOW()
+        WHERE id = $1
+      `, [orderId]);
+      await client.query(`
+        UPDATE supplier_quotations SET status = 'available', updated_at = NOW()
+        WHERE id = $1
+      `, [order.rows[0].quotation_id]);
+      await client.query(`
+        UPDATE purchase_requests SET status = 'approved', updated_at = NOW()
+        WHERE id = $1 AND status = 'converted_to_po'
+      `, [order.rows[0].request_id]);
+      return { rows: [{ id: orderId, po_number: order.rows[0].po_number }] };
+    }
+  );
+  res.json({ success: true, status: 'cancelled' });
+}));
+
 app.get('/api/documents', requireAuth, requireRole('DIREKTUR'), asyncRoute(async (_req, res) => {
   const result = await pool.query(`
     SELECT d.id, d.title, d.category, d.description, d.file_path,
            (d.file_path IS NOT NULL OR d.file_data IS NOT NULL) AS has_file,
-           d.uploaded_by, d.created_at, u.name AS uploaded_by_name
+           d.uploaded_by, d.created_at, d.archived_at, u.name AS uploaded_by_name
     FROM documents d
     LEFT JOIN users u ON u.id = d.uploaded_by
     ORDER BY d.created_at DESC
@@ -2178,9 +2453,124 @@ app.post('/api/documents', requireAuth, requireRole('DIREKTUR'), upload.single('
   res.status(201).json({ success: true, id: created.rows[0].id });
 }));
 
+app.patch('/api/documents/:id', requireAuth, requireRole('DIREKTUR'), upload.single('attachment'), asyncRoute(async (req, res) => {
+  const documentId = Number(req.params.id);
+  const title = String(req.body?.title || '').trim();
+  const category = String(req.body?.category || '').trim();
+  const description = String(req.body?.description || '').trim();
+  if (!Number.isSafeInteger(documentId) || documentId <= 0
+    || title.length < 2 || title.length > 200
+    || category.length < 2 || category.length > 120 || description.length > 3000) {
+    return res.status(400).json({ error: 'Data dokumen tidak valid.' });
+  }
+  const uploadedFile = await storeUpload(req.file, 'documents');
+  let oldUpload = null;
+  let result;
+  try {
+    result = await withInventoryAudit(
+      req.session.user.id,
+      'DOCUMENT_UPDATED',
+      `Updated document #${documentId}.`,
+      req.ip,
+      async (client) => {
+        const existing = await client.query(`
+          SELECT file_path FROM documents WHERE id = $1 AND archived_at IS NULL FOR UPDATE
+        `, [documentId]);
+        if (!existing.rowCount) {
+          const error = new Error('Dokumen tidak ditemukan atau sudah diarsipkan.');
+          error.status = 404;
+          throw error;
+        }
+        oldUpload = { key: existing.rows[0].file_path };
+        return client.query(`
+          UPDATE documents
+          SET title = $1, category = $2, description = $3,
+              file_path = CASE WHEN $4::BOOLEAN THEN $5 ELSE file_path END,
+              file_data = CASE WHEN $4::BOOLEAN THEN $6 ELSE file_data END,
+              file_name = CASE WHEN $4::BOOLEAN THEN $7 ELSE file_name END,
+              file_mime = CASE WHEN $4::BOOLEAN THEN $8 ELSE file_mime END
+          WHERE id = $9
+          RETURNING id
+        `, [
+          title, category, description, Boolean(uploadedFile),
+          uploadedFile?.key || null, uploadedFile?.data || null,
+          uploadedFile?.name || null, uploadedFile?.mimeType || null, documentId
+        ]);
+      }
+    );
+  } catch (error) {
+    await removeUpload(uploadedFile);
+    throw error;
+  }
+  let warning;
+  if (uploadedFile && oldUpload?.key) {
+    try {
+      await removeUpload(oldUpload);
+    } catch (error) {
+      console.error(`Updated document ${documentId}, but failed to remove its replaced attachment:`, error);
+      warning = 'Dokumen diperbarui, tetapi file lama belum berhasil dibersihkan.';
+    }
+  }
+  res.json({ success: true, id: result.rows[0].id, warning });
+}));
+
+app.post('/api/documents/:id/archive', requireAuth, requireRole('DIREKTUR'), asyncRoute(async (req, res) => {
+  const documentId = Number(req.params.id);
+  if (!Number.isSafeInteger(documentId) || documentId <= 0) {
+    return res.status(400).json({ error: 'ID dokumen tidak valid.' });
+  }
+  await withInventoryAudit(
+    req.session.user.id,
+    'DOCUMENT_ARCHIVED',
+    `Archived document #${documentId}.`,
+    req.ip,
+    async (client) => {
+      const archived = await client.query(`
+        UPDATE documents SET archived_at = NOW()
+        WHERE id = $1 AND archived_at IS NULL
+        RETURNING id
+      `, [documentId]);
+      if (!archived.rowCount) {
+        const error = new Error('Dokumen tidak ditemukan atau sudah diarsipkan.');
+        error.status = 404;
+        throw error;
+      }
+      return archived;
+    }
+  );
+  res.json({ success: true });
+}));
+
+app.post('/api/documents/:id/restore', requireAuth, requireRole('DIREKTUR'), asyncRoute(async (req, res) => {
+  const documentId = Number(req.params.id);
+  if (!Number.isSafeInteger(documentId) || documentId <= 0) {
+    return res.status(400).json({ error: 'ID dokumen tidak valid.' });
+  }
+  await withInventoryAudit(
+    req.session.user.id,
+    'DOCUMENT_RESTORED',
+    `Restored document #${documentId}.`,
+    req.ip,
+    async (client) => {
+      const restored = await client.query(`
+        UPDATE documents SET archived_at = NULL
+        WHERE id = $1 AND archived_at IS NOT NULL
+        RETURNING id
+      `, [documentId]);
+      if (!restored.rowCount) {
+        const error = new Error('Dokumen tidak ditemukan atau sudah aktif.');
+        error.status = 404;
+        throw error;
+      }
+      return restored;
+    }
+  );
+  res.json({ success: true });
+}));
+
 app.get('/api/documents/:id/download', requireAuth, requireRole('DIREKTUR'), asyncRoute(async (req, res) => {
   const result = await pool.query(
-    'SELECT file_path, file_data, file_name, file_mime FROM documents WHERE id = $1',
+    'SELECT file_path, file_data, file_name, file_mime FROM documents WHERE id = $1 AND archived_at IS NULL',
     [req.params.id]
   );
   const file = result.rows[0];
@@ -2202,6 +2592,7 @@ app.get('/api/bonus', requireAuth, asyncRoute(async (req, res) => {
         FROM tasks t
         LEFT JOIN users a ON a.id = t.assignee_id
         LEFT JOIN users v ON v.id = t.verified_by
+        WHERE t.archived_at IS NULL
         ORDER BY t.created_at DESC
       `)
     : await pool.query(`
@@ -2210,7 +2601,7 @@ app.get('/api/bonus', requireAuth, asyncRoute(async (req, res) => {
         FROM tasks t
         LEFT JOIN users a ON a.id = t.assignee_id
         LEFT JOIN users v ON v.id = t.verified_by
-        WHERE t.assignee_id = $1
+        WHERE t.assignee_id = $1 AND t.archived_at IS NULL
         ORDER BY t.created_at DESC
       `, [id]);
   res.json(result.rows.map((row) => ({
@@ -2224,7 +2615,7 @@ app.post('/api/tasks/:id/verify', requireAuth, requireRole('DIREKTUR'), asyncRou
   if (!['approved', 'rejected'].includes(status)) {
     return res.status(400).json({ error: 'Status verifikasi tidak valid.' });
   }
-  const taskResult = await pool.query('SELECT id, bonus_amount FROM tasks WHERE id = $1', [req.params.id]);
+  const taskResult = await pool.query('SELECT id, bonus_amount FROM tasks WHERE id = $1 AND archived_at IS NULL', [req.params.id]);
   const task = taskResult.rows[0];
   if (!task) return res.status(404).json({ error: 'Task tidak ditemukan.' });
   const nextBonus = bonus_amount === undefined ? Number(task.bonus_amount || 0) : Number(bonus_amount);
@@ -2233,26 +2624,27 @@ app.post('/api/tasks/:id/verify', requireAuth, requireRole('DIREKTUR'), asyncRou
   }
   await pool.query(`
     UPDATE tasks SET status = $1, bonus_amount = $2, verified_by = $3, updated_at = NOW()
-    WHERE id = $4
+    WHERE id = $4 AND archived_at IS NULL
   `, [status, nextBonus, req.session.user.id, req.params.id]);
   await logAudit(req.session.user.id, 'TASK_VERIFIED', `Task #${req.params.id} set to ${status}.`, req.ip);
   res.json({ success: true });
 }));
 
-app.get('/api/transactions', requireAuth, requireRole('DIREKTUR', 'KOMISARIS'), asyncRoute(async (_req, res) => {
+app.get('/api/transactions', requireAuth, requireRole('DIREKTUR', 'MANAGER', 'KOMISARIS'), asyncRoute(async (req, res) => {
   const result = await pool.query(`
     SELECT t.id, t.type, t.date, t.category, t.project_name, t.description, t.amount,
            t.payment_method, t.counterparty, t.attachment_path,
            (t.attachment_path IS NOT NULL OR t.attachment_data IS NOT NULL) AS has_attachment,
-           t.created_by, t.created_at, u.name AS created_by_name
+           t.created_by, t.created_at, t.archived_at, u.name AS created_by_name
     FROM transactions t
     LEFT JOIN users u ON u.id = t.created_by
+    WHERE t.archived_at IS NULL OR $1::BOOLEAN
     ORDER BY t.date DESC, t.id DESC
-  `);
+  `, [req.session.user.role === 'DIREKTUR']);
   res.json(result.rows);
 }));
 
-app.post('/api/transactions', requireAuth, requireRole('DIREKTUR'), upload.single('attachment'), asyncRoute(async (req, res) => {
+app.post('/api/transactions', requireAuth, requireRole('DIREKTUR', 'MANAGER'), upload.single('attachment'), asyncRoute(async (req, res) => {
   const { type, date, category, project_name, description, amount, payment_method, counterparty } = req.body || {};
   const numericAmount = Number(amount);
   if (!['income', 'expense'].includes(type) || !isValidIsoDate(date) || !Number.isFinite(numericAmount) || numericAmount <= 0) {
@@ -2283,9 +2675,133 @@ app.post('/api/transactions', requireAuth, requireRole('DIREKTUR'), upload.singl
   res.status(201).json({ success: true, id: created.rows[0].id });
 }));
 
-app.get('/api/transactions/:id/attachment', requireAuth, requireRole('DIREKTUR', 'KOMISARIS'), asyncRoute(async (req, res) => {
+app.patch('/api/transactions/:id', requireAuth, requireRole('DIREKTUR', 'MANAGER'), upload.single('attachment'), asyncRoute(async (req, res) => {
+  const transactionId = Number(req.params.id);
+  const { type, date, category, project_name, description, amount, payment_method, counterparty } = req.body || {};
+  const numericAmount = Number(amount);
+  if (!Number.isSafeInteger(transactionId) || transactionId <= 0
+    || !['income', 'expense'].includes(type) || !isValidIsoDate(date)
+    || !Number.isFinite(numericAmount) || numericAmount <= 0
+    || String(category || '').trim().length > 120
+    || String(project_name || '').trim().length > 180
+    || String(description || '').length > 3000
+    || String(payment_method || '').trim().length > 80
+    || String(counterparty || '').trim().length > 180) {
+    return res.status(400).json({ error: 'Data transaksi tidak valid.' });
+  }
+
+  const uploadedFile = await storeUpload(req.file, 'transactions');
+  let oldUpload = null;
+  let updated;
+  try {
+    updated = await withInventoryAudit(
+      req.session.user.id,
+      'TRANSACTION_UPDATED',
+      `Updated transaction #${transactionId}.`,
+      req.ip,
+      async (client) => {
+        const existing = await client.query(`
+          SELECT attachment_path FROM transactions WHERE id = $1 AND archived_at IS NULL FOR UPDATE
+        `, [transactionId]);
+        if (!existing.rowCount) {
+          const error = new Error('Transaksi tidak ditemukan.');
+          error.status = 404;
+          throw error;
+        }
+        oldUpload = { key: existing.rows[0].attachment_path };
+        return client.query(`
+          UPDATE transactions
+          SET type = $1, date = $2, category = $3, project_name = $4, description = $5,
+              amount = $6, payment_method = $7, counterparty = $8,
+              attachment_path = CASE WHEN $9::BOOLEAN THEN $10 ELSE attachment_path END,
+              attachment_data = CASE WHEN $9::BOOLEAN THEN $11 ELSE attachment_data END,
+              attachment_name = CASE WHEN $9::BOOLEAN THEN $12 ELSE attachment_name END,
+              attachment_mime = CASE WHEN $9::BOOLEAN THEN $13 ELSE attachment_mime END
+          WHERE id = $14
+          RETURNING id
+        `, [
+          type, date, String(category || 'Umum').trim() || 'Umum',
+          String(project_name || 'Umum').trim() || 'Umum', String(description || ''),
+          numericAmount, String(payment_method || 'Transfer').trim() || 'Transfer',
+          String(counterparty || 'Internal').trim() || 'Internal',
+          Boolean(uploadedFile), uploadedFile?.key || null, uploadedFile?.data || null,
+          uploadedFile?.name || null, uploadedFile?.mimeType || null, transactionId
+        ]);
+      }
+    );
+  } catch (error) {
+    await removeUpload(uploadedFile);
+    throw error;
+  }
+  let warning;
+  if (uploadedFile && oldUpload?.key) {
+    try {
+      await removeUpload(oldUpload);
+    } catch (error) {
+      console.error(`Updated transaction ${transactionId}, but failed to remove its replaced attachment:`, error);
+      warning = 'Transaksi diperbarui, tetapi lampiran lama belum berhasil dibersihkan.';
+    }
+  }
+  res.json({ success: true, id: updated.rows[0].id, warning });
+}));
+
+app.delete('/api/transactions/:id', requireAuth, requireRole('DIREKTUR'), asyncRoute(async (req, res) => {
+  const transactionId = Number(req.params.id);
+  if (!Number.isSafeInteger(transactionId) || transactionId <= 0) {
+    return res.status(400).json({ error: 'ID transaksi tidak valid.' });
+  }
+  await withInventoryAudit(
+    req.session.user.id,
+    'TRANSACTION_ARCHIVED',
+    `Archived transaction #${transactionId}.`,
+    req.ip,
+    async (client) => {
+      const deleted = await client.query(`
+        UPDATE transactions SET archived_at = NOW()
+        WHERE id = $1 AND archived_at IS NULL
+        RETURNING attachment_path
+      `, [transactionId]);
+      if (!deleted.rowCount) {
+        const error = new Error('Transaksi tidak ditemukan.');
+        error.status = 404;
+        throw error;
+      }
+      return deleted;
+    }
+  );
+  res.json({ success: true });
+}));
+
+app.post('/api/transactions/:id/restore', requireAuth, requireRole('DIREKTUR'), asyncRoute(async (req, res) => {
+  const transactionId = Number(req.params.id);
+  if (!Number.isSafeInteger(transactionId) || transactionId <= 0) {
+    return res.status(400).json({ error: 'ID transaksi tidak valid.' });
+  }
+  await withInventoryAudit(
+    req.session.user.id,
+    'TRANSACTION_RESTORED',
+    `Restored transaction #${transactionId}.`,
+    req.ip,
+    async (client) => {
+      const restored = await client.query(`
+        UPDATE transactions SET archived_at = NULL
+        WHERE id = $1 AND archived_at IS NOT NULL
+        RETURNING id
+      `, [transactionId]);
+      if (!restored.rowCount) {
+        const error = new Error('Transaksi tidak ditemukan atau sudah aktif.');
+        error.status = 404;
+        throw error;
+      }
+      return restored;
+    }
+  );
+  res.json({ success: true });
+}));
+
+app.get('/api/transactions/:id/attachment', requireAuth, requireRole('DIREKTUR', 'MANAGER', 'KOMISARIS'), asyncRoute(async (req, res) => {
   const result = await pool.query(
-    'SELECT attachment_path, attachment_data, attachment_name, attachment_mime FROM transactions WHERE id = $1',
+    'SELECT attachment_path, attachment_data, attachment_name, attachment_mime FROM transactions WHERE id = $1 AND archived_at IS NULL',
     [req.params.id]
   );
   const file = result.rows[0];
@@ -2296,6 +2812,94 @@ app.get('/api/transactions/:id/attachment', requireAuth, requireRole('DIREKTUR',
     name: file.attachment_name,
     mimeType: file.attachment_mime
   });
+}));
+
+app.patch('/api/tasks/:id', requireAuth, requireRole('DIREKTUR'), asyncRoute(async (req, res) => {
+  const taskId = Number(req.params.id);
+  const title = String(req.body?.title || '').trim();
+  const description = String(req.body?.description || '').trim();
+  const quantity = Number(req.body?.quantity);
+  const assigneeId = Number(req.body?.assignee_id);
+  if (!Number.isSafeInteger(taskId) || taskId <= 0
+    || title.length < 1 || title.length > 160 || description.length > 3000
+    || !Number.isFinite(quantity) || quantity <= 0
+    || !Number.isSafeInteger(assigneeId) || assigneeId <= 0) {
+    return res.status(400).json({ error: 'Data pekerjaan tidak valid.' });
+  }
+  const assignee = await pool.query(
+    "SELECT id FROM users WHERE id = $1 AND role = 'KARYAWAN' AND status = 'active'",
+    [assigneeId]
+  );
+  if (!assignee.rowCount) return res.status(400).json({ error: 'Karyawan yang dipilih tidak aktif atau tidak ditemukan.' });
+  const result = await withInventoryAudit(
+    req.session.user.id,
+    'TASK_UPDATED',
+    `Updated task #${taskId}.`,
+    req.ip,
+    async (client) => {
+      const updated = await client.query(`
+        UPDATE tasks
+        SET title = $1, description = $2, quantity = $3, assignee_id = $4, updated_at = NOW()
+        WHERE id = $5 AND archived_at IS NULL
+        RETURNING id, title, description, quantity, assignee_id
+      `, [title, description, quantity, assigneeId, taskId]);
+      if (!updated.rowCount) {
+        const error = new Error('Pekerjaan tidak ditemukan atau sudah diarsipkan.');
+        error.status = 404;
+        throw error;
+      }
+      return updated;
+    }
+  );
+  res.json({ success: true, task: result.rows[0] });
+}));
+
+app.post('/api/tasks/:id/archive', requireAuth, requireRole('DIREKTUR'), asyncRoute(async (req, res) => {
+  const taskId = Number(req.params.id);
+  const archive = req.body?.archived !== false;
+  if (!Number.isSafeInteger(taskId) || taskId <= 0) {
+    return res.status(400).json({ error: 'ID pekerjaan tidak valid.' });
+  }
+  const result = await withInventoryAudit(
+    req.session.user.id,
+    archive ? 'TASK_ARCHIVED' : 'TASK_RESTORED',
+    `${archive ? 'Archived' : 'Restored'} task #${taskId}.`,
+    req.ip,
+    (client) => client.query(`
+      UPDATE tasks SET archived_at = ${archive ? 'NOW()' : 'NULL'}, updated_at = NOW()
+      WHERE id = $1 AND archived_at IS ${archive ? 'NULL' : 'NOT NULL'}
+      RETURNING id
+    `, [taskId])
+  );
+  res.json({ success: true, archived: archive });
+}));
+
+app.patch('/api/tasks/:id/bonus', requireAuth, requireRole('DIREKTUR'), asyncRoute(async (req, res) => {
+  const taskId = Number(req.params.id);
+  const bonusAmount = String(req.body?.bonus_amount ?? '');
+  if (!Number.isSafeInteger(taskId) || taskId <= 0 || !isValidInventoryDecimal(bonusAmount, 2)) {
+    return res.status(400).json({ error: 'Nominal bonus tidak valid.' });
+  }
+  const result = await withInventoryAudit(
+    req.session.user.id,
+    'TASK_BONUS_UPDATED',
+    `Updated bonus for task #${taskId}.`,
+    req.ip,
+    async (client) => {
+      const updated = await client.query(`
+        UPDATE tasks SET bonus_amount = $1::NUMERIC, updated_at = NOW()
+        WHERE id = $2 AND archived_at IS NULL
+        RETURNING id, bonus_amount::TEXT AS bonus_amount
+      `, [bonusAmount, taskId]);
+      if (!updated.rowCount) {
+        const error = new Error('Pekerjaan tidak ditemukan atau sudah diarsipkan.');
+        error.status = 404;
+        throw error;
+      }
+      return updated;
+    }
+  );
+  res.json({ success: true, task: result.rows[0] });
 }));
 
 app.get('/api/tasks', requireAuth, asyncRoute(async (req, res) => {
@@ -2314,7 +2918,7 @@ app.get('/api/tasks', requireAuth, asyncRoute(async (req, res) => {
                  u.name AS assignee_name
           FROM tasks t
           LEFT JOIN users u ON u.id = t.assignee_id
-          WHERE t.assignee_id = $1
+          WHERE t.assignee_id = $1 AND t.archived_at IS NULL
           ORDER BY t.created_at DESC
       `, [req.session.user.id]);
   res.json(result.rows);
@@ -2357,7 +2961,7 @@ app.post('/api/tasks/:id/progress', requireAuth, asyncRoute(async (req, res) => 
       SET progress_percent = $1, progress_note = $2, result = $3,
           status = CASE WHEN $1 = 100 THEN 'in_review' ELSE 'pending' END,
           updated_at = NOW()
-      WHERE id = $4 AND assignee_id = $5 AND status <> 'approved'
+      WHERE id = $4 AND assignee_id = $5 AND status <> 'approved' AND archived_at IS NULL
       RETURNING id
     `, [progress, note, outcome, req.params.id, req.session.user.id]);
     if (!updated.rows[0]) {

@@ -1,5 +1,5 @@
-const CACHE_NAME = 'bbm-static-v13';
-const ASSETS = ['/', '/index.html', '/styles.css?v=20261110-commissioner-finance', '/app.js', '/manifest.webmanifest', '/images/logo-bbm.png'];
+const CACHE_NAME = 'bbm-static-v14';
+const ASSETS = ['/', '/index.html', '/styles.css?v=20261110-manager-finance', '/app.js', '/manifest.webmanifest', '/images/logo-bbm.png'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS)));

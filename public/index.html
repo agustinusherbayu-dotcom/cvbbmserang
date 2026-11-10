@@ -8,7 +8,7 @@
     <link rel="icon" type="image/png" href="/images/logo-bbm.png" />
     <link rel="apple-touch-icon" href="/images/logo-bbm.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
-    <link rel="stylesheet" href="/styles.css?v=20261110-commissioner-finance" />
+    <link rel="stylesheet" href="/styles.css?v=20261110-manager-finance" />
   </head>
   <body>
     <div id="app" class="app-shell">
@@ -186,13 +186,14 @@
 
           <section id="financeView" class="view hidden">
             <div id="financeReadOnlyNote" class="panel field-help" role="note" hidden>
-              Anda memiliki akses baca saja ke data keuangan. Alur kas dan transaksi hanya dapat dikelola oleh Direktur.
+              Anda memiliki akses baca saja ke data keuangan. Pengubahan transaksi memerlukan akses Direktur atau Manager.
             </div>
             <div class="panel" data-finance-write>
               <div class="panel-header">
-                <h3>Input Transaksi</h3>
+                <h3 id="transactionFormHeading">Input Transaksi</h3>
               </div>
               <form id="transactionForm" class="transaction-form">
+                <input type="hidden" name="transaction_id" />
                 <div class="form-grid transaction-quick-grid">
                   <label>
                     <span>Jenis</span>
@@ -249,7 +250,10 @@
                     </label>
                   </div>
                 </details>
-                <button type="submit" class="primary-btn">Simpan Catatan</button>
+                <div class="inline-actions">
+                  <button type="submit" class="primary-btn">Simpan Catatan</button>
+                  <button id="cancelTransactionEdit" type="button" class="ghost-btn" hidden>Batal Edit</button>
+                </div>
               </form>
             </div>
 
@@ -434,6 +438,7 @@
               <div class="panel" data-procurement-write>
                 <div class="panel-header"><h3>Buat Purchase Request</h3></div>
                 <form id="purchaseRequestForm" class="transaction-form">
+                  <input type="hidden" name="request_id" />
                   <div class="form-grid">
                     <label><span>Divisi</span><input name="division" maxlength="120" placeholder="Operasional / Produksi" /></label>
                     <label><span>Kategori kebutuhan</span><input name="category" maxlength="120" required /></label>
@@ -452,7 +457,10 @@
                     </div>
                   </div>
                   <label><span>Alasan pembelian</span><textarea name="reason" rows="3" maxlength="1500" required></textarea></label>
-                  <button class="primary-btn" type="submit">Ajukan PR</button>
+                  <div class="inline-actions">
+                    <button id="purchaseRequestSubmit" class="primary-btn" type="submit">Ajukan PR</button>
+                    <button id="cancelPurchaseRequestEdit" class="ghost-btn" type="button" hidden>Batal Edit</button>
+                  </div>
                 </form>
               </div>
 
@@ -488,6 +496,7 @@
                 <h3>Dokumen Keuangan & Proyek</h3>
               </div>
               <form id="documentForm" class="transaction-form" enctype="multipart/form-data">
+                <input type="hidden" name="document_id" />
                 <div class="form-grid">
                   <label>
                     <span>Judul Dokumen</span>
@@ -508,7 +517,10 @@
                   <small class="field-help">Maksimal 3 MB agar dapat diunggah ke Vercel. Kompres file yang lebih besar terlebih dahulu.</small>
                   <small class="field-help" data-storage-note hidden></small>
                 </label>
-                <button type="submit" class="primary-btn">Simpan Dokumen</button>
+                <div class="inline-actions">
+                  <button id="documentFormSubmit" type="submit" class="primary-btn">Simpan Dokumen</button>
+                  <button id="cancelDocumentEdit" type="button" class="ghost-btn" hidden>Batal Edit</button>
+                </div>
               </form>
             </div>
 
@@ -541,6 +553,7 @@
                 <h3>Tugaskan Pekerjaan</h3>
               </div>
               <form id="taskForm" class="transaction-form">
+                <input type="hidden" name="task_id" />
                 <div class="form-grid">
                   <label>
                     <span>Judul Pekerjaan</span>
@@ -561,7 +574,10 @@
                   <span>Instruksi / deskripsi pekerjaan</span>
                   <textarea name="description" rows="3" maxlength="3000" placeholder="Jelaskan tugas dan hasil yang diharapkan"></textarea>
                 </label>
-                <button type="submit" class="primary-btn">Tugaskan pekerjaan</button>
+                <div class="inline-actions">
+                  <button id="taskFormSubmit" type="submit" class="primary-btn">Tugaskan pekerjaan</button>
+                  <button id="cancelTaskEdit" type="button" class="ghost-btn" hidden>Batal Edit</button>
+                </div>
               </form>
             </div>
 

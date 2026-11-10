@@ -13,7 +13,7 @@ This project is a responsive internal company management application for BBM. It
 - Direktur can edit or cancel purchase requests and quotations, and cancel active purchase orders while keeping approval history
 - Only Direktur/admin can create accounts or change roles; Manager, Komisaris, and Karyawan cannot access user administration
 - Manager, Komisaris, and Karyawan can only access tasks assigned to their own account and their personal bonus summaries
-- Direktur assigns tasks to active Karyawan accounts; employees submit progress notes, results, and 1–4 required photo evidence files per update, with each update retained in task history for review
+- Direktur can assign one task to multiple active Karyawan accounts; each assigned employee can submit progress notes, results, and 1–4 required photo evidence files per update, with every update retained in shared task history
 - Employee dashboards show personal task counts and progress, without company cash, transaction, or financial summary data
 - Completed tasks with their photo evidence are submitted for Direktur review; only the Director can approve the result or request corrections
 - Transaction input for finance management

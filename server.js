@@ -119,6 +119,15 @@ async function initializeDatabase() {
     ALTER TABLE tasks ADD COLUMN IF NOT EXISTS result TEXT NOT NULL DEFAULT '';
     UPDATE tasks SET progress_percent = 100
     WHERE status IN ('in_review', 'approved') AND progress_percent = 0;
+    CREATE TABLE IF NOT EXISTS task_assignees (
+      task_id BIGINT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      user_id BIGINT NOT NULL REFERENCES users(id),
+      assigned_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (task_id, user_id)
+    );
+    INSERT INTO task_assignees (task_id, user_id)
+    SELECT id, assignee_id FROM tasks
+    ON CONFLICT (task_id, user_id) DO NOTHING;
     CREATE TABLE IF NOT EXISTS task_progress_updates (
       id BIGSERIAL PRIMARY KEY,
       task_id BIGINT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
@@ -435,6 +444,7 @@ async function initializeDatabase() {
     );
     CREATE INDEX IF NOT EXISTS transactions_date_idx ON transactions(date DESC);
     CREATE INDEX IF NOT EXISTS tasks_assignee_created_idx ON tasks(assignee_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS task_assignees_user_task_idx ON task_assignees(user_id, task_id);
     CREATE INDEX IF NOT EXISTS task_progress_updates_task_idx ON task_progress_updates(task_id, submitted_at DESC);
     CREATE INDEX IF NOT EXISTS task_progress_photos_update_idx ON task_progress_photos(progress_update_id, created_at);
     CREATE INDEX IF NOT EXISTS documents_created_idx ON documents(created_at DESC);
@@ -699,19 +709,33 @@ async function getDashboardData(user) {
     : [];
   const tasks = isDirector
     ? (await pool.query(`
-        SELECT t.*, u.name AS assignee_name, v.name AS verifier_name
+        SELECT t.*, assignment_list.assignee_ids, assignment_list.assignee_names AS assignee_name,
+               v.name AS verifier_name
         FROM tasks t
-        LEFT JOIN users u ON u.id = t.assignee_id
+        LEFT JOIN LATERAL (
+          SELECT ARRAY_AGG(ta.user_id ORDER BY u.name) AS assignee_ids,
+                 STRING_AGG(u.name, ', ' ORDER BY u.name) AS assignee_names
+          FROM task_assignees ta JOIN users u ON u.id = ta.user_id
+          WHERE ta.task_id = t.id
+        ) assignment_list ON TRUE
         LEFT JOIN users v ON v.id = t.verified_by
         WHERE t.archived_at IS NULL
         ORDER BY t.created_at DESC
       `)).rows
     : (await pool.query(`
-        SELECT t.*, u.name AS assignee_name, v.name AS verifier_name
+        SELECT t.*, assignment_list.assignee_ids, assignment_list.assignee_names AS assignee_name,
+               v.name AS verifier_name
         FROM tasks t
-        LEFT JOIN users u ON u.id = t.assignee_id
+        JOIN task_assignees current_assignment ON current_assignment.task_id = t.id
+          AND current_assignment.user_id = $1
+        LEFT JOIN LATERAL (
+          SELECT ARRAY_AGG(ta.user_id ORDER BY u.name) AS assignee_ids,
+                 STRING_AGG(u.name, ', ' ORDER BY u.name) AS assignee_names
+          FROM task_assignees ta JOIN users u ON u.id = ta.user_id
+          WHERE ta.task_id = t.id
+        ) assignment_list ON TRUE
         LEFT JOIN users v ON v.id = t.verified_by
-        WHERE t.assignee_id = $1 AND t.archived_at IS NULL
+        WHERE t.archived_at IS NULL
         ORDER BY t.created_at DESC
       `, [user.id])).rows;
   const activities = isDirector
@@ -2574,8 +2598,10 @@ app.post('/api/procurement/purchase-orders/:id/cancel', requireAuth, requireRole
 app.get('/api/field-monitoring/references', requireAuth, asyncRoute(async (req, res) => {
   const [tasks, items, warehouses, requests] = await Promise.all([
     pool.query(`
-      SELECT id, title, status FROM tasks
-      WHERE archived_at IS NULL AND ($1::BOOLEAN OR assignee_id = $2)
+      SELECT t.id, t.title, t.status FROM tasks t
+      WHERE t.archived_at IS NULL AND ($1::BOOLEAN OR EXISTS (
+        SELECT 1 FROM task_assignees ta WHERE ta.task_id = t.id AND ta.user_id = $2
+      ))
       ORDER BY created_at DESC LIMIT 300
     `, [req.session.user.role !== 'KARYAWAN', req.session.user.id]),
     pool.query(`
@@ -2871,8 +2897,10 @@ app.post('/api/field-monitoring/reports', requireAuth, requireRole('KARYAWAN', '
       async (client) => {
         if (taskId) {
           const task = await client.query(`
-            SELECT id FROM tasks WHERE id = $1 AND archived_at IS NULL
-              AND ($2::BOOLEAN OR assignee_id = $3)
+            SELECT t.id FROM tasks t WHERE t.id = $1 AND t.archived_at IS NULL
+              AND ($2::BOOLEAN OR EXISTS (
+                SELECT 1 FROM task_assignees ta WHERE ta.task_id = t.id AND ta.user_id = $3
+              ))
           `, [taskId, req.session.user.role !== 'KARYAWAN', req.session.user.id]);
           if (!task.rowCount) {
             const error = new Error('Pekerjaan tidak ditemukan atau bukan tugas Anda.');
@@ -3415,20 +3443,30 @@ app.get('/api/bonus', requireAuth, asyncRoute(async (req, res) => {
   const result = role === 'DIREKTUR'
     ? await pool.query(`
         SELECT t.id, t.title, t.quantity, t.bonus_amount, t.status, t.created_at,
-               a.name AS assignee_name, v.name AS verifier_name
+               assignee_list.assignee_names AS assignee_name, v.name AS verifier_name
         FROM tasks t
-        LEFT JOIN users a ON a.id = t.assignee_id
+        LEFT JOIN LATERAL (
+          SELECT STRING_AGG(u.name, ', ' ORDER BY u.name) AS assignee_names
+          FROM task_assignees ta JOIN users u ON u.id = ta.user_id
+          WHERE ta.task_id = t.id
+        ) assignee_list ON TRUE
         LEFT JOIN users v ON v.id = t.verified_by
         WHERE t.archived_at IS NULL
         ORDER BY t.created_at DESC
       `)
     : await pool.query(`
         SELECT t.id, t.title, t.quantity, t.bonus_amount, t.status, t.created_at,
-               a.name AS assignee_name, v.name AS verifier_name
+               assignee_list.assignee_names AS assignee_name, v.name AS verifier_name
         FROM tasks t
-        LEFT JOIN users a ON a.id = t.assignee_id
+        JOIN task_assignees current_assignment ON current_assignment.task_id = t.id
+          AND current_assignment.user_id = $1
+        LEFT JOIN LATERAL (
+          SELECT STRING_AGG(u.name, ', ' ORDER BY u.name) AS assignee_names
+          FROM task_assignees ta JOIN users u ON u.id = ta.user_id
+          WHERE ta.task_id = t.id
+        ) assignee_list ON TRUE
         LEFT JOIN users v ON v.id = t.verified_by
-        WHERE t.assignee_id = $1 AND t.archived_at IS NULL
+        WHERE t.archived_at IS NULL
         ORDER BY t.created_at DESC
       `, [id]);
   res.json(result.rows.map((row) => ({
@@ -3646,35 +3684,56 @@ app.patch('/api/tasks/:id', requireAuth, requireRole('DIREKTUR'), asyncRoute(asy
   const title = String(req.body?.title || '').trim();
   const description = String(req.body?.description || '').trim();
   const quantity = Number(req.body?.quantity);
-  const assigneeId = Number(req.body?.assignee_id);
+  const requestedAssignees = req.body?.assignee_ids ?? [req.body?.assignee_id];
+  const assigneeIds = Array.isArray(requestedAssignees)
+    ? [...new Set(requestedAssignees.map(Number))]
+    : [];
   if (!Number.isSafeInteger(taskId) || taskId <= 0
     || title.length < 1 || title.length > 160 || description.length > 3000
     || !Number.isFinite(quantity) || quantity <= 0
-    || !Number.isSafeInteger(assigneeId) || assigneeId <= 0) {
+    || !assigneeIds.length || assigneeIds.some((id) => !Number.isSafeInteger(id) || id <= 0)) {
     return res.status(400).json({ error: 'Data pekerjaan tidak valid.' });
   }
-  const assignee = await pool.query(
-    "SELECT id FROM users WHERE id = $1 AND role = 'KARYAWAN' AND status = 'active'",
-    [assigneeId]
-  );
-  if (!assignee.rowCount) return res.status(400).json({ error: 'Karyawan yang dipilih tidak aktif atau tidak ditemukan.' });
   const result = await withInventoryAudit(
     req.session.user.id,
     'TASK_UPDATED',
-    `Updated task #${taskId}.`,
+    `Updated task #${taskId}, assigned to ${assigneeIds.length} employee(s).`,
     req.ip,
     async (client) => {
+      const assignees = await client.query(
+        "SELECT id, status FROM users WHERE id = ANY($1::BIGINT[]) AND role = 'KARYAWAN'",
+        [assigneeIds]
+      );
+      const existingAssignees = await client.query(
+        'SELECT user_id FROM task_assignees WHERE task_id = $1',
+        [taskId]
+      );
+      const existingIds = new Set(existingAssignees.rows.map((row) => String(row.user_id)));
+      if (assignees.rowCount !== assigneeIds.length
+        || assignees.rows.some((user) => user.status !== 'active' && !existingIds.has(String(user.id)))) {
+        const error = new Error('Pilih karyawan aktif; karyawan nonaktif hanya dapat dipertahankan jika sudah ditugaskan.');
+        error.status = 400;
+        throw error;
+      }
       const updated = await client.query(`
         UPDATE tasks
         SET title = $1, description = $2, quantity = $3, assignee_id = $4, updated_at = NOW()
         WHERE id = $5 AND archived_at IS NULL
         RETURNING id, title, description, quantity, assignee_id
-      `, [title, description, quantity, assigneeId, taskId]);
+      `, [title, description, quantity, assigneeIds[0], taskId]);
       if (!updated.rowCount) {
         const error = new Error('Pekerjaan tidak ditemukan atau sudah diarsipkan.');
         error.status = 404;
         throw error;
       }
+      await client.query('DELETE FROM task_assignees WHERE task_id = $1', [taskId]);
+      for (const assigneeId of assigneeIds) {
+        await client.query(
+          'INSERT INTO task_assignees (task_id, user_id) VALUES ($1, $2)',
+          [taskId, assigneeId]
+        );
+      }
+      updated.rows[0].assignee_ids = assigneeIds;
       return updated;
     }
   );
@@ -3733,20 +3792,34 @@ app.get('/api/tasks', requireAuth, asyncRoute(async (req, res) => {
   const isDirector = req.session.user.role === 'DIREKTUR';
   const result = isDirector
     ? await pool.query(`
-        SELECT t.*, u.name AS assignee_name, v.name AS verifier_name
+        SELECT t.*, assignment_list.assignee_ids,
+               assignment_list.assignee_names AS assignee_name, v.name AS verifier_name
         FROM tasks t
-        LEFT JOIN users u ON u.id = t.assignee_id
+        LEFT JOIN LATERAL (
+          SELECT ARRAY_AGG(ta.user_id ORDER BY u.name) AS assignee_ids,
+                 STRING_AGG(u.name, ', ' ORDER BY u.name) AS assignee_names
+          FROM task_assignees ta JOIN users u ON u.id = ta.user_id
+          WHERE ta.task_id = t.id
+        ) assignment_list ON TRUE
         LEFT JOIN users v ON v.id = t.verified_by
         ORDER BY t.created_at DESC
       `)
     : await pool.query(`
           SELECT t.id, t.title, t.description, t.assignee_id, t.quantity, t.status,
                  t.progress_percent, t.progress_note, t.result, t.created_at, t.updated_at,
-                 u.name AS assignee_name, v.name AS verifier_name
+                 assignment_list.assignee_ids, assignment_list.assignee_names AS assignee_name,
+                 v.name AS verifier_name
           FROM tasks t
-          LEFT JOIN users u ON u.id = t.assignee_id
+          JOIN task_assignees current_assignment ON current_assignment.task_id = t.id
+            AND current_assignment.user_id = $1
+          LEFT JOIN LATERAL (
+            SELECT ARRAY_AGG(ta.user_id ORDER BY u.name) AS assignee_ids,
+                   STRING_AGG(u.name, ', ' ORDER BY u.name) AS assignee_names
+            FROM task_assignees ta JOIN users u ON u.id = ta.user_id
+            WHERE ta.task_id = t.id
+          ) assignment_list ON TRUE
           LEFT JOIN users v ON v.id = t.verified_by
-          WHERE t.assignee_id = $1 AND t.archived_at IS NULL
+          WHERE t.archived_at IS NULL
           ORDER BY t.created_at DESC
       `, [req.session.user.id]);
   res.json(result.rows);
@@ -3757,9 +3830,17 @@ app.get('/api/tasks/:id/updates', requireAuth, asyncRoute(async (req, res) => {
   if (!Number.isSafeInteger(taskId) || taskId <= 0) {
     return res.status(400).json({ error: 'ID pekerjaan tidak valid.' });
   }
-  const taskResult = await pool.query('SELECT assignee_id FROM tasks WHERE id = $1', [taskId]);
+  const taskResult = await pool.query(`
+    SELECT t.id FROM tasks t
+    WHERE t.id = $1 AND (
+      $2::BOOLEAN OR EXISTS (
+        SELECT 1 FROM task_assignees ta
+        WHERE ta.task_id = t.id AND ta.user_id = $3
+      )
+    )
+  `, [taskId, req.session.user.role === 'DIREKTUR', req.session.user.id]);
   const task = taskResult.rows[0];
-  if (!task || (req.session.user.role !== 'DIREKTUR' && String(task.assignee_id) !== String(req.session.user.id))) {
+  if (!task) {
     return res.status(404).json({ error: 'Pekerjaan tidak ditemukan.' });
   }
   const updates = await pool.query(`
@@ -3787,12 +3868,15 @@ app.get('/api/tasks/progress-photos/:id/:action', requireAuth, asyncRoute(async 
     return res.status(404).json({ error: 'Foto bukti tidak ditemukan.' });
   }
   const result = await pool.query(`
-    SELECT photo.storage_key, photo.file_data, photo.file_name, photo.mime_type, task.assignee_id
+    SELECT photo.storage_key, photo.file_data, photo.file_name, photo.mime_type
     FROM task_progress_photos photo
     JOIN task_progress_updates progress ON progress.id = photo.progress_update_id
     JOIN tasks task ON task.id = progress.task_id
     WHERE photo.id = $1
-      AND ($2::BOOLEAN OR task.assignee_id = $3)
+      AND ($2::BOOLEAN OR EXISTS (
+        SELECT 1 FROM task_assignees assignment
+        WHERE assignment.task_id = task.id AND assignment.user_id = $3
+      ))
   `, [photoId, req.session.user.role === 'DIREKTUR', req.session.user.id]);
   const photo = result.rows[0];
   if (!photo) return res.status(404).json({ error: 'Foto bukti tidak ditemukan.' });
@@ -3846,7 +3930,11 @@ app.post('/api/tasks/:id/progress', requireAuth, fieldPhotoUpload.array('photos'
       SET progress_percent = $1, progress_note = $2, result = $3,
           status = CASE WHEN $1 = 100 THEN 'in_review' ELSE 'pending' END,
           updated_at = NOW()
-      WHERE id = $4 AND assignee_id = $5 AND status NOT IN ('approved', 'in_review') AND archived_at IS NULL
+      WHERE id = $4 AND status NOT IN ('approved', 'in_review') AND archived_at IS NULL
+        AND EXISTS (
+          SELECT 1 FROM task_assignees assignment
+          WHERE assignment.task_id = tasks.id AND assignment.user_id = $5
+        )
       RETURNING id
     `, [progress, note, outcome, taskId, req.session.user.id]);
     if (!updated.rows[0]) {
@@ -3903,27 +3991,46 @@ app.post('/api/tasks/:id/progress', requireAuth, fieldPhotoUpload.array('photos'
 }));
 
 app.post('/api/tasks', requireAuth, requireRole('DIREKTUR'), asyncRoute(async (req, res) => {
-  const { title, description, quantity, assignee_id } = req.body || {};
+  const { title, description, quantity } = req.body || {};
   const cleanTitle = String(title || '').trim();
   const cleanDescription = String(description || '').trim();
   const numericQuantity = Number(quantity);
-  const assigneeId = Number(assignee_id);
+  const requestedAssignees = req.body?.assignee_ids ?? [req.body?.assignee_id];
+  const assigneeIds = Array.isArray(requestedAssignees)
+    ? [...new Set(requestedAssignees.map(Number))]
+    : [];
   if (!cleanTitle || cleanTitle.length > 160 || cleanDescription.length > 3000 ||
-      !Number.isFinite(numericQuantity) || numericQuantity <= 0 ||
-      !Number.isSafeInteger(assigneeId) || assigneeId <= 0) {
-    return res.status(400).json({ error: 'Judul, target hasil, dan karyawan yang ditugaskan wajib diisi dengan benar.' });
+      !Number.isFinite(numericQuantity) || numericQuantity <= 0 || !assigneeIds.length ||
+      assigneeIds.some((id) => !Number.isSafeInteger(id) || id <= 0)) {
+    return res.status(400).json({ error: 'Judul, target hasil, dan minimal satu karyawan yang ditugaskan wajib diisi dengan benar.' });
   }
   const assignee = await pool.query(
-    "SELECT id FROM users WHERE id = $1 AND role = 'KARYAWAN' AND status = 'active'",
-    [assigneeId]
+    "SELECT id FROM users WHERE id = ANY($1::BIGINT[]) AND role = 'KARYAWAN' AND status = 'active'",
+    [assigneeIds]
   );
-  if (!assignee.rows[0]) return res.status(400).json({ error: 'Karyawan yang dipilih tidak aktif atau tidak ditemukan.' });
-  const created = await pool.query(`
-    INSERT INTO tasks (title, description, assignee_id, quantity, status, bonus_amount, created_by)
-    VALUES ($1, $2, $3, $4, 'pending', 0, $5)
-    RETURNING id
-  `, [cleanTitle, cleanDescription, assigneeId, numericQuantity, req.session.user.id]);
-  await logAudit(req.session.user.id, 'TASK_CREATED', `Created task #${created.rows[0].id} for employee #${assigneeId}: ${cleanTitle}`, req.ip);
+  if (assignee.rowCount !== assigneeIds.length) {
+    return res.status(400).json({ error: 'Satu atau beberapa karyawan yang dipilih tidak aktif atau tidak ditemukan.' });
+  }
+  const created = await withInventoryAudit(
+    req.session.user.id,
+    'TASK_CREATED',
+    `Assigned ${cleanTitle} to ${assigneeIds.length} employee(s).`,
+    req.ip,
+    async (client) => {
+      const task = await client.query(`
+        INSERT INTO tasks (title, description, assignee_id, quantity, status, bonus_amount, created_by)
+        VALUES ($1, $2, $3, $4, 'pending', 0, $5)
+        RETURNING id
+      `, [cleanTitle, cleanDescription, assigneeIds[0], numericQuantity, req.session.user.id]);
+      for (const assigneeId of assigneeIds) {
+        await client.query(
+          'INSERT INTO task_assignees (task_id, user_id) VALUES ($1, $2)',
+          [task.rows[0].id, assigneeId]
+        );
+      }
+      return task;
+    }
+  );
   res.status(201).json({ success: true, id: created.rows[0].id });
 }));
 
@@ -3947,9 +4054,13 @@ app.get('/api/export/excel', requireAuth, requireRole('DIREKTUR'), asyncRoute(as
     `),
     pool.query(`
       SELECT t.id, t.title, t.description, t.quantity, t.status, t.bonus_amount,
-             a.name AS assignee_name, v.name AS verifier_name
+             assignment_list.assignee_names AS assignee_name, v.name AS verifier_name
       FROM tasks t
-      LEFT JOIN users a ON a.id = t.assignee_id
+      LEFT JOIN LATERAL (
+        SELECT STRING_AGG(u.name, ', ' ORDER BY u.name) AS assignee_names
+        FROM task_assignees ta JOIN users u ON u.id = ta.user_id
+        WHERE ta.task_id = t.id
+      ) assignment_list ON TRUE
       LEFT JOIN users v ON v.id = t.verified_by
       ORDER BY t.created_at DESC
     `),

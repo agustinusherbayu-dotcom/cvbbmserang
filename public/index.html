@@ -644,12 +644,11 @@
                     <span>Judul Pekerjaan</span>
                     <input type="text" name="title" maxlength="160" required />
                   </label>
-                  <label class="task-assignee-field">
-                    <span>Tugaskan kepada karyawan</span>
-                    <select id="taskAssignee" name="assignee_id" required>
-                      <option value="">Pilih karyawan</option>
-                    </select>
-                  </label>
+                  <div class="task-assignee-field">
+                    <span class="task-assignee-label">Tugaskan kepada karyawan</span>
+                    <div id="taskAssignees" class="task-assignee-options" role="group" aria-label="Pilih satu atau beberapa karyawan"></div>
+                    <small class="field-help">Pilih satu atau beberapa karyawan untuk bekerja bersama.</small>
+                  </div>
                   <label>
                     <span>Target hasil</span>
                     <input type="number" name="quantity" min="0.01" step="any" required />

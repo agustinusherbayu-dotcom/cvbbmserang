@@ -198,8 +198,8 @@ function renderTaskDetails(tasks, key) {
       rejected: 'Perlu perbaikan'
     };
     const taskStatus = statusLabels[task.status] || 'Belum selesai';
-    const assignee = state.user?.role === 'DIREKTUR' && task.assignee_name
-      ? `<span>${escapeHtml(task.assignee_name)}</span>`
+    const assignee = task.assignee_name
+        ? `<span>${state.user?.role === 'DIREKTUR' ? '' : 'Tim: '}${escapeHtml(task.assignee_name)}</span>`
       : '';
     const bonus = state.user?.role === 'DIREKTUR' && task.bonus_amount !== undefined
       ? `<span>Bonus: ${formatCurrency(task.bonus_amount)}</span>`
@@ -413,7 +413,7 @@ function renderTaskTable(tasks) {
         <div class="task-card-heading">
           <div>
             <h4>${escapeHtml(task.title)}</h4>
-            ${canVerify ? `<p class="task-assignee">Ditugaskan kepada ${escapeHtml(task.assignee_name || '-')}</p>` : ''}
+            ${task.assignee_name ? `<p class="task-assignee">${canVerify ? 'Ditugaskan kepada' : 'Tim'}: ${escapeHtml(task.assignee_name)}</p>` : ''}
           </div>
           <span class="tag ${status}">${status === 'archived' ? 'Diarsipkan' : statusLabels[status]}</span>
         </div>
@@ -1120,11 +1120,20 @@ async function loadUsers() {
   const users = await apiFetch('/api/users');
   state.users = users;
   renderUsersTable(users);
-  const assigneeSelect = document.getElementById('taskAssignee');
-  assigneeSelect.innerHTML = '<option value="">Pilih karyawan</option>' + users
+  const assigneeOptions = document.getElementById('taskAssignees');
+  assigneeOptions.innerHTML = users
     .filter((user) => user.role === 'KARYAWAN' && user.status === 'active')
-    .map((user) => `<option value="${Number(user.id)}">${escapeHtml(user.name)}</option>`)
-    .join('');
+    .map((user) => `
+      <label class="task-assignee-option">
+        <input type="checkbox" name="assignee_ids" value="${Number(user.id)}" />
+        <span>${escapeHtml(user.name)}</span>
+      </label>
+    `).join('') || '<span class="field-help">Belum ada akun karyawan aktif.</span>';
+}
+
+function resetTaskAssigneeChecks(form) {
+  form.querySelectorAll('input[name="assignee_ids"]').forEach((input) => { input.checked = false; });
+  form.querySelectorAll('[data-inactive-assignee]').forEach((option) => option.remove());
 }
 
 async function loadAudit() {
@@ -2156,6 +2165,11 @@ document.addEventListener('submit', async (event) => {
   const button = form.querySelector('button[type="submit"]');
   button.disabled = true;
   const values = Object.fromEntries(new FormData(form).entries());
+  values.assignee_ids = [...form.querySelectorAll('input[name="assignee_ids"]:checked')].map((input) => input.value);
+  if (!values.assignee_ids.length) {
+    alert('Pilih minimal satu karyawan untuk pekerjaan ini.');
+    return;
+  }
   values.items = [...form.querySelectorAll('[data-quote-price]')].map((input) => ({
     request_item_id: Number(input.dataset.quotePrice),
     unit_price: input.value
@@ -2327,6 +2341,7 @@ supplierForm.addEventListener('submit', async (event) => {
       { method: supplierId ? 'PATCH' : 'POST', body: JSON.stringify(values) }
     );
     form.reset();
+    resetTaskAssigneeChecks(form);
     form.elements.supplier_id.value = '';
     button.textContent = 'Simpan Supplier';
     document.getElementById('cancelSupplierEdit').hidden = true;
@@ -2805,6 +2820,7 @@ document.getElementById('cancelTaskEdit').addEventListener('click', () => {
   const form = document.getElementById('taskForm');
   form.reset();
   form.elements.task_id.value = '';
+  resetTaskAssigneeChecks(form);
   document.getElementById('taskFormSubmit').textContent = 'Tugaskan pekerjaan';
   document.getElementById('cancelTaskEdit').hidden = true;
 });
@@ -2815,11 +2831,27 @@ document.addEventListener('click', async (event) => {
     const task = state.tasks.find((entry) => Number(entry.id) === Number(editTaskButton.dataset.editTask));
     if (!task) return;
     const form = document.getElementById('taskForm');
+    resetTaskAssigneeChecks(form);
     form.elements.task_id.value = String(task.id);
     form.elements.title.value = task.title;
     form.elements.description.value = task.description || '';
     form.elements.quantity.value = task.quantity;
-    form.elements.assignee_id.value = String(task.assignee_id);
+    const assignedIds = (task.assignee_ids || [task.assignee_id]).map(String);
+    const activeOptionIds = new Set([...form.querySelectorAll('input[name="assignee_ids"]')].map((input) => input.value));
+    for (const assignedId of assignedIds) {
+      if (activeOptionIds.has(assignedId)) continue;
+      const assignedUser = state.users.find((user) => String(user.id) === assignedId);
+      if (!assignedUser) continue;
+      document.getElementById('taskAssignees').insertAdjacentHTML('beforeend', `
+        <label class="task-assignee-option" data-inactive-assignee>
+          <input type="checkbox" name="assignee_ids" value="${Number(assignedUser.id)}" />
+          <span>${escapeHtml(assignedUser.name)} · nonaktif</span>
+        </label>
+      `);
+    }
+    form.querySelectorAll('input[name="assignee_ids"]').forEach((input) => {
+      input.checked = assignedIds.includes(input.value);
+    });
     document.getElementById('taskFormSubmit').textContent = 'Simpan Perubahan';
     document.getElementById('cancelTaskEdit').hidden = false;
     form.scrollIntoView({ behavior: 'smooth', block: 'center' });

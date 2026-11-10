@@ -1237,6 +1237,57 @@ select {
   line-height: 1.55;
 }
 
+.task-assignee-field {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+}
+
+.task-assignee-label {
+  color: #354456;
+  font-size: 0.83rem;
+  font-weight: 650;
+}
+
+.task-assignee-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 7px;
+  max-height: 190px;
+  overflow: auto;
+  padding: 9px;
+  border: 1px solid #dce6e3;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.task-assignee-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 7px;
+  border-radius: 7px;
+  color: var(--text);
+  font-size: 0.84rem;
+  cursor: pointer;
+}
+
+.task-assignee-option:hover {
+  background: #f3f7f4;
+}
+
+.task-assignee-option input {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  accent-color: var(--royal);
+}
+
+.task-assignee-option span {
+  overflow-wrap: anywhere;
+}
+
 .task-progress-heading {
   align-items: center;
   margin-bottom: -8px;

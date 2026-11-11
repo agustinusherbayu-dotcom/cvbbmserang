@@ -1,5 +1,5 @@
-const CACHE_NAME = 'bbm-static-v16';
-const ASSETS = ['/', '/index.html', '/styles.css?v=20261110-field-monitoring', '/app.js', '/manifest.webmanifest', '/images/logo-bbm.png'];
+const CACHE_NAME = 'bbm-static-v17';
+const ASSETS = ['/', '/index.html', '/styles.css?v=20261111-login-premium', '/app.js', '/manifest.webmanifest', '/images/logo-bbm.png', '/images/bbm-cover.png'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS)));
@@ -16,6 +16,7 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const requestUrl = new URL(event.request.url);
   if (event.request.method !== 'GET' || requestUrl.origin !== self.location.origin || requestUrl.pathname.startsWith('/api/')) return;
+  if (requestUrl.pathname.startsWith('/videos/')) return;
 
   event.respondWith(
     fetch(event.request)

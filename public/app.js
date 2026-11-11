@@ -39,6 +39,68 @@ let loginLockTimer = null;
 let loginLockUntil = 0;
 
 document.getElementById('loginYear').textContent = new Date().getFullYear();
+const loginClock = document.getElementById('loginClock');
+const loginDate = document.getElementById('loginDate');
+const loginGreeting = document.getElementById('loginGreeting');
+const loginBackgroundVideo = document.getElementById('loginBackgroundVideo');
+const loginVideoToggle = document.getElementById('loginVideoToggle');
+const loginStory = document.querySelector('.login-story');
+
+function updateLoginClock() {
+  const now = new Date();
+  const hour = now.getHours();
+  loginGreeting.textContent = hour < 12 ? 'Good Morning' : hour < 18 ? 'Good Afternoon' : 'Good Evening';
+  loginClock.textContent = new Intl.DateTimeFormat('id-ID', {
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+  }).format(now);
+  loginDate.textContent = new Intl.DateTimeFormat('id-ID', {
+    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric'
+  }).format(now);
+}
+
+function initializeLoginVideo() {
+  const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const slowConnection = connection?.saveData || /(^|-)2g$/.test(connection?.effectiveType || '');
+  if (reducedMotion || slowConnection) {
+    loginVideoToggle.hidden = true;
+    return;
+  }
+
+  loginBackgroundVideo.addEventListener('loadeddata', () => loginStory.classList.add('video-ready'));
+  loginBackgroundVideo.addEventListener('error', () => {
+    loginStory.classList.remove('video-ready');
+    loginVideoToggle.hidden = true;
+    loginBackgroundVideo.pause();
+    loginBackgroundVideo.removeAttribute('src');
+    loginBackgroundVideo.load();
+  });
+  const mobileViewport = window.matchMedia('(max-width: 900px)');
+  const setVideoSource = () => {
+    const source = mobileViewport.matches
+      ? '/videos/login-industrial-mobile.mp4'
+      : '/videos/login-industrial-desktop.mp4';
+    if (loginBackgroundVideo.getAttribute('src') === source) return;
+    loginStory.classList.remove('video-ready');
+    loginBackgroundVideo.src = source;
+    loginBackgroundVideo.load();
+    loginBackgroundVideo.play().catch(() => loginStory.classList.remove('video-ready'));
+  };
+  mobileViewport.addEventListener('change', setVideoSource);
+  setVideoSource();
+}
+
+updateLoginClock();
+window.setInterval(updateLoginClock, 1000);
+initializeLoginVideo();
+
+loginVideoToggle.addEventListener('click', () => {
+  loginBackgroundVideo.muted = !loginBackgroundVideo.muted;
+  const isMuted = loginBackgroundVideo.muted;
+  loginVideoToggle.textContent = isMuted ? 'Audio nonaktif' : 'Audio aktif';
+  loginVideoToggle.setAttribute('aria-pressed', String(isMuted));
+  loginVideoToggle.setAttribute('aria-label', isMuted ? 'Aktifkan audio video' : 'Nonaktifkan audio video');
+});
 
 function setLoginSubmitLabel(text) {
   loginSubmitLabel.textContent = text;
@@ -67,12 +129,12 @@ function setLoginLock(retryAfterSeconds) {
 
   loginLockTimer = setInterval(() => {
     const remaining = Math.max(0, Math.ceil((loginLockUntil - Date.now()) / 1000));
-    setLoginSubmitLabel(remaining > 0 ? `Tunggu ${remaining}s` : 'Masuk dengan aman');
+    setLoginSubmitLabel(remaining > 0 ? `Tunggu ${remaining}s` : 'Login securely');
 
     if (remaining <= 0) {
       clearInterval(loginLockTimer);
       loginSubmitButton.disabled = false;
-      setLoginSubmitLabel('Masuk dengan aman');
+      setLoginSubmitLabel('Login securely');
       loginMessage.textContent = '';
     }
   }, 1000);
@@ -1469,6 +1531,7 @@ async function loadSession() {
 
 function showDashboard() {
   loginScreen.classList.add('hidden');
+  loginBackgroundVideo.pause();
   dashboardScreen.classList.remove('hidden');
   userName.textContent = state.user?.name || '-';
   userRole.textContent = state.user?.role === 'DIREKTUR' ? 'Admin · Direktur' : state.user?.role || 'KARYAWAN';
@@ -1482,6 +1545,7 @@ function showDashboard() {
 function showLogin() {
   dashboardScreen.classList.add('hidden');
   loginScreen.classList.remove('hidden');
+  if (loginBackgroundVideo.src) loginBackgroundVideo.play().catch(() => {});
 }
 
 loginForm.addEventListener('submit', async (event) => {
@@ -1493,6 +1557,12 @@ loginForm.addEventListener('submit', async (event) => {
 
   const formData = new FormData(loginForm);
   const payload = Object.fromEntries(formData.entries());
+  loginMessage.className = 'message';
+  loginMessage.textContent = '';
+  loginSubmitButton.disabled = true;
+  loginSubmitButton.classList.remove('is-success');
+  loginSubmitButton.classList.add('is-loading');
+  setLoginSubmitLabel('Signing in...');
 
   try {
     const result = await apiFetch('/api/login', {
@@ -1505,16 +1575,27 @@ loginForm.addEventListener('submit', async (event) => {
       loginLockTimer = null;
     }
     loginSubmitButton.disabled = false;
-    setLoginSubmitLabel('Masuk dengan aman');
+    setLoginSubmitLabel('Access granted');
+    loginSubmitButton.classList.remove('is-loading');
+    loginSubmitButton.classList.add('is-success');
+    await new Promise((resolve) => window.setTimeout(resolve, 320));
+    loginSubmitButton.classList.remove('is-success');
+    setLoginSubmitLabel('Login securely');
     state.user = result.user;
     loginMessage.textContent = '';
+    loginSubmitButton.disabled = false;
     showDashboard();
     await refreshData();
   } catch (error) {
     if (error.status === 429 || error.retryAfter > 0) {
+      loginSubmitButton.classList.remove('is-loading');
       setLoginLock(error.retryAfter || 15);
       return;
     }
+    loginSubmitButton.classList.remove('is-loading');
+    loginSubmitButton.disabled = false;
+    setLoginSubmitLabel('Login securely');
+    loginMessage.classList.add('is-error');
     loginMessage.textContent = error.message;
   }
 });
@@ -1826,6 +1907,7 @@ togglePinBtn.addEventListener('click', () => {
   const isHidden = pinInput.type === 'password';
   pinInput.type = isHidden ? 'text' : 'password';
   togglePinBtn.textContent = isHidden ? 'Sembunyikan' : 'Lihat';
+  togglePinBtn.setAttribute('aria-label', isHidden ? 'Sembunyikan PIN' : 'Tampilkan PIN');
 });
 
 document.addEventListener('change', async (event) => {

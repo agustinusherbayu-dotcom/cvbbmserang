@@ -8,38 +8,49 @@
     <link rel="icon" type="image/png" href="/images/logo-bbm.png" />
     <link rel="apple-touch-icon" href="/images/logo-bbm.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
-    <link rel="stylesheet" href="/styles.css?v=20261110-field-monitoring" />
+    <link rel="stylesheet" href="/styles.css?v=20261111-login-premium" />
   </head>
   <body>
     <div id="app" class="app-shell">
       <div id="loginScreen" class="login-screen active">
         <div class="login-layout">
-          <section class="login-story" aria-label="Tentang BBM">
-            <div class="story-brand">
-              <img class="story-logo" src="/images/logo-bbm.png" alt="Logo CV Banten Bangkit Maju" />
-              <span>BBM <i>Company Portal</i></span>
-            </div>
+          <section class="login-story" aria-label="CV Banten Bangkit Maju">
+            <video id="loginBackgroundVideo" class="login-background-video" autoplay muted loop playsinline preload="none" poster="/images/bbm-cover.png" aria-hidden="true"></video>
+            <div class="login-story-overlay"></div>
+            <div class="login-particles" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+            <div class="login-story-content">
+              <div class="story-brand">
+                <img class="story-logo" src="/images/logo-bbm.png" alt="Logo resmi CV Banten Bangkit Maju" />
+                <span>CV BANTEN<br />BANGKIT MAJU<i>Integrated Business &amp; Operational Management</i></span>
+              </div>
 
-            <div class="story-copy">
-              <span class="eyebrow"><span class="eyebrow-dot"></span> Satu ruang untuk bertumbuh</span>
-              <h1>Bersama membangun <em>masa depan</em> yang lebih baik.</h1>
-              <p>Kelola pekerjaan, bonus, dan aktivitas perusahaan dengan lebih mudah dalam satu tempat.</p>
-            </div>
+              <div class="story-copy">
+                <span class="eyebrow"><span class="eyebrow-dot"></span> Agroindustri berkelanjutan</span>
+                <h1>Built on the land.<br /><em>Moving industry forward.</em></h1>
+                <p>Satu ruang kerja untuk menggerakkan operasional, produksi, dan pertumbuhan yang berkelanjutan.</p>
+              </div>
 
-            <div class="story-footer">
-              <span class="story-line"></span>
-              <span>Agroindustri berkelanjutan</span>
+              <div class="story-footer">
+                <div class="login-local-meta">
+                  <span class="login-meta-label">WAKTU PERANGKAT</span>
+                  <strong id="loginClock">--:--:--</strong>
+                  <span id="loginDate">Memuat tanggal...</span>
+                </div>
+                <button id="loginVideoToggle" class="login-video-toggle" type="button" aria-pressed="true" aria-label="Aktifkan audio video">Audio nonaktif</button>
+              </div>
             </div>
-            <div class="story-orb story-orb-one"></div>
-            <div class="story-orb story-orb-two"></div>
           </section>
 
           <section class="login-panel">
             <div class="login-card">
+              <div class="login-brand-mark">
+                <img src="/images/logo-bbm.png" alt="" />
+                <span>BBM <i>COMPANY PORTAL</i></span>
+              </div>
               <div class="login-heading">
-                <span class="login-kicker">SELAMAT DATANG KEMBALI</span>
-                <h2>Masuk ke akun Anda</h2>
-                <p>Gunakan nomor telepon dan PIN yang terdaftar.</p>
+                <span id="loginGreeting" class="login-kicker">Good Morning</span>
+                <h2>Welcome Back</h2>
+                <p>Access Your Company Workspace</p>
               </div>
 
               <form id="loginForm" class="login-form">
@@ -65,18 +76,19 @@
                 </label>
 
                 <button type="submit" class="primary-btn login-submit">
-                  <span>Masuk dengan aman</span>
+                  <span>Login securely</span>
+                  <i class="login-spinner" aria-hidden="true"></i>
                   <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
                 </button>
-                <p id="loginMessage" class="message" aria-live="polite"></p>
+                <p id="loginMessage" class="message" aria-live="polite" role="status"></p>
               </form>
 
               <div class="login-security">
                 <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3.5 19 6v5.2c0 4.2-2.8 7.5-7 9.3-4.2-1.8-7-5.1-7-9.3V6l7-2.5Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="m9 12 2 2 4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                <span>Akses aman dan khusus untuk tim BBM</span>
+                <span>Private workspace · Authorized team access</span>
               </div>
             </div>
-            <div class="login-copyright">© <span id="loginYear"></span> CV Banten Bangkit Maju</div>
+            <div class="login-copyright">© <span id="loginYear"></span> CV BANTEN BANGKIT MAJU <span>·</span> ALL RIGHTS RESERVED</div>
           </section>
         </div>
       </div>

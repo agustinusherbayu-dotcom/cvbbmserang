@@ -43,8 +43,38 @@ const loginClock = document.getElementById('loginClock');
 const loginDate = document.getElementById('loginDate');
 const loginGreeting = document.getElementById('loginGreeting');
 const loginBackgroundVideo = document.getElementById('loginBackgroundVideo');
-const loginVideoToggle = document.getElementById('loginVideoToggle');
+const loginBackgroundMusic = document.getElementById('loginBackgroundMusic');
+const loginMusicToggle = document.getElementById('loginMusicToggle');
 const loginStory = document.querySelector('.login-story');
+loginBackgroundMusic.volume = 0.22;
+
+function setLoginMusicButton(isPlaying, unavailable = false) {
+  loginMusicToggle.disabled = unavailable;
+  loginMusicToggle.textContent = unavailable ? 'Musik tidak tersedia' : isPlaying ? 'Jeda musik' : 'Putar musik';
+  loginMusicToggle.setAttribute('aria-pressed', String(isPlaying));
+  loginMusicToggle.setAttribute('aria-label', unavailable
+    ? 'Musik latar tidak tersedia'
+    : isPlaying ? 'Jeda musik latar' : 'Putar musik latar');
+}
+
+async function toggleLoginMusic() {
+  if (!loginBackgroundMusic.paused) {
+    loginBackgroundMusic.pause();
+    setLoginMusicButton(false);
+    return;
+  }
+  if (!loginBackgroundMusic.getAttribute('src')) {
+    loginBackgroundMusic.src = '/audio/Banten_Bangkit_Maju.mp3';
+  }
+  loginMusicToggle.disabled = true;
+  try {
+    await loginBackgroundMusic.play();
+    setLoginMusicButton(true);
+  } catch (error) {
+    console.warn('Login background music could not be played:', error);
+    setLoginMusicButton(false, true);
+  }
+}
 
 function updateLoginClock() {
   const now = new Date();
@@ -70,7 +100,6 @@ function initializeLoginVideo() {
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const slowConnection = connection?.saveData || /(^|-)2g$/.test(connection?.effectiveType || '');
   if (reducedMotion || slowConnection) {
-    loginVideoToggle.hidden = true;
     return;
   }
 
@@ -81,7 +110,6 @@ function initializeLoginVideo() {
   });
   loginBackgroundVideo.addEventListener('error', () => {
     loginStory.classList.remove('video-ready');
-    loginVideoToggle.hidden = true;
     loginBackgroundVideo.pause();
     loginBackgroundVideo.removeAttribute('src');
     loginBackgroundVideo.load();
@@ -101,6 +129,8 @@ function initializeLoginVideo() {
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
       loginBackgroundVideo.pause();
+      loginBackgroundMusic.pause();
+      setLoginMusicButton(false);
       loginStory.classList.remove('video-ready');
       return;
     }
@@ -113,13 +143,7 @@ updateLoginClock();
 window.setInterval(updateLoginClock, 1000);
 initializeLoginVideo();
 
-loginVideoToggle.addEventListener('click', () => {
-  loginBackgroundVideo.muted = !loginBackgroundVideo.muted;
-  const isMuted = loginBackgroundVideo.muted;
-  loginVideoToggle.textContent = isMuted ? 'Audio nonaktif' : 'Audio aktif';
-  loginVideoToggle.setAttribute('aria-pressed', String(isMuted));
-  loginVideoToggle.setAttribute('aria-label', isMuted ? 'Aktifkan audio video' : 'Nonaktifkan audio video');
-});
+loginMusicToggle.addEventListener('click', toggleLoginMusic);
 
 function setLoginSubmitLabel(text) {
   loginSubmitLabel.textContent = text;
@@ -1551,6 +1575,8 @@ async function loadSession() {
 function showDashboard() {
   loginScreen.classList.add('hidden');
   loginBackgroundVideo.pause();
+  loginBackgroundMusic.pause();
+  setLoginMusicButton(false);
   loginStory.classList.remove('video-ready');
   dashboardScreen.classList.remove('hidden');
   userName.textContent = state.user?.name || '-';

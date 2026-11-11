@@ -2705,24 +2705,30 @@ select {
   font-size: 0.76rem;
 }
 
-.login-video-toggle {
-  min-height: 40px;
-  border: 1px solid rgba(224, 242, 255, 0.34);
-  border-radius: 8px;
-  padding: 0 13px;
-  color: #f2fbff;
-  background: rgba(8, 28, 48, 0.36);
+.login-music-toggle {
+  flex: 0 0 auto;
+  min-height: 36px;
+  margin-left: auto;
+  border: 1px solid #c9dce2;
+  border-radius: 7px;
+  padding: 0 10px;
+  color: #20576d;
+  background: rgba(241, 249, 251, 0.9);
   cursor: pointer;
-  font-size: 0.75rem;
+  font-size: 0.68rem;
   font-weight: 650;
-  backdrop-filter: blur(12px);
   transition: background 180ms ease, border-color 180ms ease, transform 180ms ease;
 }
 
-.login-video-toggle:hover {
+.login-music-toggle:hover:not(:disabled) {
   transform: translateY(-1px);
-  border-color: rgba(169, 234, 244, 0.72);
-  background: rgba(8, 28, 48, 0.68);
+  border-color: #70b9c7;
+  background: #eaf6f8;
+}
+
+.login-music-toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
 }
 
 .login-particles {
@@ -2934,7 +2940,7 @@ select {
 }
 
 .login-form .login-submit:focus-visible,
-.login-video-toggle:focus-visible {
+.login-music-toggle:focus-visible {
   outline: 3px solid rgba(65, 189, 211, 0.5);
   outline-offset: 3px;
 }

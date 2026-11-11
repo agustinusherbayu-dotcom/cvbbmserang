@@ -8,7 +8,7 @@
     <link rel="icon" type="image/png" href="/images/logo-bbm.png" />
     <link rel="apple-touch-icon" href="/images/logo-bbm.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
-    <link rel="stylesheet" href="/styles.css?v=20261111-login-premium" />
+    <link rel="stylesheet" href="/styles.css?v=20261111-login-music" />
   </head>
   <body>
     <div id="app" class="app-shell">
@@ -16,6 +16,7 @@
         <div class="login-layout">
           <section class="login-story" aria-label="CV Banten Bangkit Maju">
             <video id="loginBackgroundVideo" class="login-background-video" autoplay muted loop playsinline preload="none" poster="/images/bbm-cover.png" aria-hidden="true"></video>
+            <audio id="loginBackgroundMusic" loop preload="none" aria-hidden="true"></audio>
             <div class="login-story-overlay"></div>
             <div class="login-particles" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
             <div class="login-story-content">
@@ -36,7 +37,6 @@
                   <strong id="loginClock">--:--:--</strong>
                   <span id="loginDate">Memuat tanggal...</span>
                 </div>
-                <button id="loginVideoToggle" class="login-video-toggle" type="button" aria-pressed="true" aria-label="Aktifkan audio video">Audio nonaktif</button>
               </div>
             </div>
           </section>
@@ -46,6 +46,7 @@
               <div class="login-brand-mark">
                 <img src="/images/logo-bbm.png" alt="" />
                 <span>BBM <i>COMPANY PORTAL</i></span>
+                <button id="loginMusicToggle" class="login-music-toggle" type="button" aria-pressed="false" aria-label="Putar musik latar">Putar musik</button>
               </div>
               <div class="login-heading">
                 <span id="loginGreeting" class="login-kicker">Good Morning</span>
@@ -787,6 +788,6 @@
       </dialog>
     </div>
 
-    <script src="/app.js?v=20261111-login-video-resume"></script>
+    <script src="/app.js?v=20261111-login-music"></script>
   </body>
 </html>

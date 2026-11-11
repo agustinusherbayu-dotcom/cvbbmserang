@@ -58,6 +58,13 @@ function updateLoginClock() {
   }).format(now);
 }
 
+function playLoginBackgroundVideo() {
+  if (!loginBackgroundVideo.getAttribute('src')
+    || loginScreen.classList.contains('hidden')
+    || document.visibilityState !== 'visible') return;
+  loginBackgroundVideo.play().catch(() => loginStory.classList.remove('video-ready'));
+}
+
 function initializeLoginVideo() {
   const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -67,7 +74,11 @@ function initializeLoginVideo() {
     return;
   }
 
-  loginBackgroundVideo.addEventListener('loadeddata', () => loginStory.classList.add('video-ready'));
+  loginBackgroundVideo.addEventListener('playing', () => {
+    if (!document.hidden && !loginScreen.classList.contains('hidden')) {
+      loginStory.classList.add('video-ready');
+    }
+  });
   loginBackgroundVideo.addEventListener('error', () => {
     loginStory.classList.remove('video-ready');
     loginVideoToggle.hidden = true;
@@ -84,9 +95,17 @@ function initializeLoginVideo() {
     loginStory.classList.remove('video-ready');
     loginBackgroundVideo.src = source;
     loginBackgroundVideo.load();
-    loginBackgroundVideo.play().catch(() => loginStory.classList.remove('video-ready'));
+    playLoginBackgroundVideo();
   };
   mobileViewport.addEventListener('change', setVideoSource);
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      loginBackgroundVideo.pause();
+      loginStory.classList.remove('video-ready');
+      return;
+    }
+    playLoginBackgroundVideo();
+  });
   setVideoSource();
 }
 
@@ -1532,6 +1551,7 @@ async function loadSession() {
 function showDashboard() {
   loginScreen.classList.add('hidden');
   loginBackgroundVideo.pause();
+  loginStory.classList.remove('video-ready');
   dashboardScreen.classList.remove('hidden');
   userName.textContent = state.user?.name || '-';
   userRole.textContent = state.user?.role === 'DIREKTUR' ? 'Admin · Direktur' : state.user?.role || 'KARYAWAN';
@@ -1545,7 +1565,7 @@ function showDashboard() {
 function showLogin() {
   dashboardScreen.classList.add('hidden');
   loginScreen.classList.remove('hidden');
-  if (loginBackgroundVideo.src) loginBackgroundVideo.play().catch(() => {});
+  playLoginBackgroundVideo();
 }
 
 loginForm.addEventListener('submit', async (event) => {

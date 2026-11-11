@@ -2796,6 +2796,8 @@ document.getElementById('taskForm').addEventListener('submit', async (event) => 
   event.preventDefault();
   const form = event.currentTarget;
   const values = Object.fromEntries(new FormData(form).entries());
+  values.assignee_ids = [...form.querySelectorAll('input[name="assignee_ids"]:checked')]
+    .map((input) => input.value);
   const taskId = values.task_id;
   delete values.task_id;
   const button = form.querySelector('button[type="submit"]');

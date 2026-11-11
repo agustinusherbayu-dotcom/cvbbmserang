@@ -8,7 +8,10 @@
     <link rel="icon" type="image/png" href="/images/logo-bbm.png" />
     <link rel="apple-touch-icon" href="/images/logo-bbm.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
-    <link rel="stylesheet" href="/styles.css?v=20261111-login-music" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/styles.css?v=20261111-dashboard" />
   </head>
   <body>
     <div id="app" class="app-shell">
@@ -95,106 +98,144 @@
       </div>
 
       <div id="dashboardScreen" class="dashboard-screen hidden">
+        <button id="sidebarBackdrop" class="sidebar-backdrop" type="button" aria-label="Tutup menu"></button>
         <aside class="sidebar">
           <div class="brand-panel">
             <img class="brand-mini" src="/images/logo-bbm.png" alt="Logo BBM" />
-            <div>
+            <div class="brand-copy">
               <strong>BBM</strong>
-              <small>Company system</small>
+              <small>CV Banten Bangkit Maju</small>
             </div>
           </div>
 
-          <nav class="nav-menu">
-            <button class="nav-btn active" data-view="dashboard">Dashboard</button>
-            <button class="nav-btn" data-view="finance">Keuangan</button>
-            <button class="nav-btn" data-view="inventory">Inventory</button>
-            <button class="nav-btn" data-view="procurement">Pengadaan</button>
-            <button class="nav-btn" data-view="documents">Dokumen</button>
-            <button class="nav-btn" data-view="fieldMonitoring">FIELD MONITORING</button>
-            <button class="nav-btn" data-view="bonus">Bonus</button>
-            <button class="nav-btn" data-view="tasks">Pekerjaan</button>
-            <button class="nav-btn" data-view="users">Pengguna</button>
-            <button class="nav-btn" data-view="audit">Audit</button>
+          <span class="nav-section-label">RUANG KERJA</span>
+          <nav class="nav-menu" aria-label="Navigasi utama">
+            <button class="nav-btn active" data-view="dashboard" data-tooltip="Dashboard" aria-label="Dashboard"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="5" rx="1.5"/><rect x="13" y="10" width="8" height="11" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/></svg><span>Dashboard</span></button>
+            <button class="nav-btn" data-view="finance" data-tooltip="Keuangan" aria-label="Keuangan"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18m-5 4h3"/></svg><span>Keuangan</span></button>
+            <button class="nav-btn" data-view="inventory" data-tooltip="Inventory" aria-label="Inventory"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 12 9 5 9-5M3 16l9 5 9-5M12 13v8"/></svg><span>Inventory</span></button>
+            <button class="nav-btn" data-view="procurement" data-tooltip="Pengadaan" aria-label="Pengadaan"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h11v11H3zM14 11h4l3 3v4h-7z"/><circle cx="7.5" cy="19" r="1.5"/><circle cx="17.5" cy="19" r="1.5"/></svg><span>Pengadaan</span></button>
+            <button class="nav-btn" data-view="documents" data-tooltip="Dokumen" aria-label="Dokumen"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8m-8 4h8"/></svg><span>Dokumen</span></button>
+            <button class="nav-btn" data-view="fieldMonitoring" data-tooltip="Field Monitoring" aria-label="Field Monitoring"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 10c0 5-8 12-8 12S4 15 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="2.5"/></svg><span>Field Monitoring</span></button>
+            <button class="nav-btn" data-view="bonus" data-tooltip="Bonus" aria-label="Bonus"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="8" width="18" height="13" rx="2"/><path d="M12 8v13M3 12h18M12 8H7.5a2.5 2.5 0 1 1 2.4-3.2L12 8Zm0 0h4.5a2.5 2.5 0 1 0-2.4-3.2L12 8Z"/></svg><span>Bonus</span></button>
+            <button class="nav-btn" data-view="tasks" data-tooltip="Pekerjaan" aria-label="Pekerjaan"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 11 3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg><span>Pekerjaan</span></button>
+            <button class="nav-btn" data-view="users" data-tooltip="Pengguna" aria-label="Pengguna"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2m6-10a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm10 10v-2a4 4 0 0 0-3-3.87m-1-11.13a4 4 0 0 1 0 7.75"/></svg><span>Pengguna</span></button>
+            <button class="nav-btn" data-view="audit" data-tooltip="Audit" aria-label="Audit"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 4 6v5c0 5 3.4 8.6 8 10 4.6-1.4 8-5 8-10V6l-8-3Z"/><path d="M9 12h6m-6 3h4m-4-6h6"/></svg><span>Audit</span></button>
           </nav>
 
-          <div class="profile-box">
-            <p>Pengguna</p>
-            <h3 id="userName">-</h3>
-            <span id="userRole">-</span>
-            <button id="changePinBtn" class="profile-action-btn" type="button">Ubah PIN saya</button>
-            <button id="logoutBtn" class="primary-btn small">Logout</button>
+          <div class="sidebar-footer">
+            <span class="sidebar-footer-dot"></span>
+            <span>Workspace internal</span>
           </div>
         </aside>
 
         <main class="dashboard-main">
           <header class="topbar">
-            <div>
-              <h2 id="pageTitle">Dashboard</h2>
+            <div class="topbar-left">
+              <button id="sidebarToggle" class="icon-button sidebar-toggle" type="button" aria-label="Buka navigasi" aria-expanded="false" title="Navigasi">
+                <svg class="menu-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+                <svg class="collapse-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+              </button>
+              <div class="topbar-title-group">
+                <div class="breadcrumbs"><span>BBM</span><span aria-hidden="true">/</span><span id="pageBreadcrumb">Ringkasan</span></div>
+                <h2 id="pageTitle">Dashboard</h2>
+              </div>
             </div>
-            <div class="topbar-indicator">
-              <span class="status-dot"></span>
-              Sistem aktif
+            <div class="topbar-actions">
+              <time id="topbarDateTime" class="topbar-date"></time>
+              <button id="notificationButton" class="icon-button notification-button" type="button" aria-label="Buka notifikasi" title="Notifikasi">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9m-8 12h4"/></svg>
+                <span id="notificationBadge" class="notification-badge" hidden>0</span>
+              </button>
+              <div class="topbar-indicator"><span class="status-dot"></span><span>Sistem aktif</span></div>
+              <div class="account-menu">
+                <button id="profileToggle" class="profile-toggle" type="button" aria-expanded="false" aria-haspopup="true">
+                  <span class="profile-avatar" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.5"/><path d="M5 21a7 7 0 0 1 14 0"/></svg></span>
+                  <span class="profile-toggle-copy"><strong id="userName">-</strong><small id="userRole">-</small></span>
+                  <svg class="profile-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg>
+                </button>
+                <div id="profileDropdown" class="profile-dropdown" hidden>
+                  <button id="changePinBtn" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3m-4 5v2"/></svg>Ubah PIN saya</button>
+                  <button id="logoutBtn" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 17l5-5-5-5m5 5H3m9-9h7a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-7"/></svg>Keluar</button>
+                </div>
+              </div>
             </div>
           </header>
 
           <section id="dashboardView" class="view active">
-            <section class="dashboard-hero" aria-label="Sampul CV Banten Bangkit Maju">
+            <section class="dashboard-hero" aria-label="Selamat datang di BBM Company System">
               <div class="dashboard-hero-copy">
                 <span>CV BANTEN BANGKIT MAJU · COMPANY PORTAL</span>
-                <h3>Bertumbuh bersama, melangkah lebih maju.</h3>
-                <p>Ruang kerja terpadu untuk mendukung agroindustri yang berkelanjutan.</p>
+                <h3>Selamat Datang di BBM Company System</h3>
+                <p>Platform manajemen terpadu untuk mendukung operasional dan pertumbuhan CV Banten Bangkit Maju.</p>
               </div>
-              <div class="dashboard-hero-badge">
-                <span class="hero-badge-dot"></span>
-                Agroindustri berkelanjutan
-              </div>
+              <img class="dashboard-hero-logo" src="/images/logo-bbm.png" alt="" />
             </section>
             <div id="directorQuickActions" class="panel quick-actions-panel">
               <div class="panel-header">
-                <h3>Aksi Cepat</h3>
+                <div><span class="section-eyebrow">AKSES CEPAT</span><h3>Aksi cepat</h3></div>
               </div>
-              <div class="quick-actions">
-                <button class="primary-btn" id="exportExcelBtn" type="button">Export Excel</button>
+              <div class="quick-action-row">
+                <div id="dashboardQuickActions" class="quick-actions"></div>
+                <button class="quick-action export-quick-action" id="exportExcelBtn" type="button" hidden>
+                  <span class="quick-action-icon"><svg class="dashboard-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M5 17v4h14v-4"/></svg></span>
+                  <span>Export Excel</span><svg class="dashboard-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6"/></svg>
+                </button>
               </div>
             </div>
-            <div id="summaryGrid" class="summary-grid"></div>
+            <div class="dashboard-section-heading"><div><span class="section-eyebrow">RINGKASAN</span><h3>Ikhtisar operasional</h3></div><span id="dashboardAsOf" class="dashboard-as-of"></span></div>
+            <div id="summaryGrid" class="summary-grid" aria-live="polite" aria-busy="true">
+              <div class="summary-skeleton"></div><div class="summary-skeleton"></div><div class="summary-skeleton"></div><div class="summary-skeleton"></div>
+            </div>
             <div id="employeeDashboardNote" class="panel employee-dashboard-note hidden">
-              <span class="employee-note-mark" aria-hidden="true">✓</span>
+              <span class="employee-note-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></svg></span>
               <div>
                 <h3>Fokus pekerjaan Anda</h3>
                 <p>Lihat tugas yang diberikan kepada Anda, catat progres secara berkala, dan kirim hasil untuk diperiksa.</p>
                 <button class="mini-btn success" type="button" data-open-tasks>Lihat pekerjaan saya</button>
               </div>
             </div>
-            <div id="companyDashboardContent">
-              <div class="panel-grid two-col">
-                <div class="panel">
-                  <div class="panel-header">
-                    <h3>Grafik Pemasukan dan Pengeluaran</h3>
+            <div id="companyDashboardContent" class="dashboard-content">
+              <div class="analytics-grid">
+                <section class="panel analytics-panel">
+                  <div class="panel-header analytics-header">
+                    <div><span class="section-eyebrow">ANALITIK KEUANGAN</span><h3>Pemasukan &amp; pengeluaran</h3></div>
+                    <div class="period-tabs" role="group" aria-label="Periode grafik">
+                      <button type="button" data-dashboard-period="daily">Harian</button>
+                      <button type="button" data-dashboard-period="weekly">Mingguan</button>
+                      <button class="active" type="button" data-dashboard-period="monthly">Bulanan</button>
+                      <button type="button" data-dashboard-period="yearly">Tahunan</button>
+                    </div>
                   </div>
-                  <div id="chartBars" class="chart-bars"></div>
-                </div>
-                <div class="panel">
-                  <div class="panel-header">
-                    <h3>Rekap Bulanan</h3>
+                  <div class="chart-legend"><span><i class="legend-income"></i>Pemasukan</span><span><i class="legend-expense"></i>Pengeluaran</span></div>
+                  <div id="chartBars" class="chart-bars" aria-label="Grafik pemasukan dan pengeluaran" aria-busy="true">
+                    <span class="chart-skeleton"></span><span class="chart-skeleton"></span><span class="chart-skeleton"></span><span class="chart-skeleton"></span><span class="chart-skeleton"></span><span class="chart-skeleton"></span>
                   </div>
+                </section>
+                <section class="panel monthly-panel">
+                  <div class="panel-header"><div><span class="section-eyebrow">PERIODE TERKINI</span><h3>Rekap keuangan</h3></div></div>
                   <div id="monthlySummary" class="mini-table"></div>
-                </div>
+                </section>
               </div>
-              <div class="panel-grid two-col">
-                <div class="panel">
-                  <div class="panel-header">
-                    <h3>Transaksi Terbaru</h3>
-                  </div>
+              <div class="dashboard-lower-grid">
+                <section class="panel dashboard-list-panel">
+                  <div class="panel-header"><div><span class="section-eyebrow">KEUANGAN</span><h3>Transaksi terakhir</h3></div><button class="text-action" type="button" data-dashboard-open="finance">Lihat semua <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6"/></svg></button></div>
                   <div id="recentTransactions" class="list-table"></div>
-                </div>
-                <div class="panel" data-director-only>
-                  <div class="panel-header">
-                    <h3>Aktivitas Terbaru</h3>
-                  </div>
+                </section>
+                <section class="panel dashboard-list-panel" data-director-only>
+                  <div class="panel-header"><div><span class="section-eyebrow">AUDIT</span><h3>Aktivitas terbaru</h3></div><button class="text-action" type="button" data-dashboard-open="audit">Lihat semua <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6"/></svg></button></div>
                   <div id="recentActivity" class="list-table"></div>
-                </div>
+                </section>
               </div>
+            </div>
+            <div class="dashboard-lower-grid dashboard-module-grid">
+              <section class="panel dashboard-list-panel">
+                <div class="panel-header"><div><span class="section-eyebrow">TIM</span><h3>Status pekerjaan</h3></div><button class="text-action" type="button" data-dashboard-open="tasks">Lihat semua <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6"/></svg></button></div>
+                <div id="dashboardTasks" class="dashboard-compact-list"></div>
+              </section>
+              <section class="panel dashboard-list-panel">
+                <div class="panel-header"><div><span class="section-eyebrow">PENGADAAN</span><h3>Pengadaan terbaru</h3></div><button class="text-action" type="button" data-dashboard-open="procurement">Lihat semua <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6"/></svg></button></div>
+                <div id="dashboardProcurement" class="dashboard-compact-list"></div>
+              </section>
             </div>
           </section>
 
@@ -788,6 +829,6 @@
       </dialog>
     </div>
 
-    <script src="/app.js?v=20261111-login-music"></script>
+    <script src="/app.js?v=20261111-dashboard"></script>
   </body>
 </html>

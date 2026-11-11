@@ -1,5 +1,5 @@
-const CACHE_NAME = 'bbm-static-v19';
-const ASSETS = ['/', '/index.html', '/styles.css?v=20261111-login-music', '/app.js?v=20261111-login-music', '/manifest.webmanifest', '/images/logo-bbm.png', '/images/bbm-cover.png'];
+const CACHE_NAME = 'bbm-static-v20';
+const ASSETS = ['/', '/index.html', '/styles.css?v=20261111-dashboard', '/app.js?v=20261111-dashboard', '/manifest.webmanifest', '/images/logo-bbm.png', '/images/bbm-cover.png'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS)));

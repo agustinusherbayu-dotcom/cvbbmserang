@@ -46,7 +46,17 @@ const loginBackgroundVideo = document.getElementById('loginBackgroundVideo');
 const loginBackgroundMusic = document.getElementById('loginBackgroundMusic');
 const loginMusicToggle = document.getElementById('loginMusicToggle');
 const loginStory = document.querySelector('.login-story');
+const topbarDateTime = document.getElementById('topbarDateTime');
 loginBackgroundMusic.volume = 0.22;
+
+function updateTopbarDateTime() {
+  topbarDateTime.textContent = new Intl.DateTimeFormat('id-ID', {
+    weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit'
+  }).format(new Date());
+}
+
+updateTopbarDateTime();
+window.setInterval(updateTopbarDateTime, 60000);
 
 function setLoginMusicButton(isPlaying, unavailable = false) {
   loginMusicToggle.disabled = unavailable;
@@ -214,13 +224,61 @@ function validateUploadSize(form) {
   return false;
 }
 
+function dashboardIcon(name) {
+  const paths = {
+    balance: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18m-5 4h3"/>',
+    income: '<path d="M12 19V5m-6 6 6-6 6 6M5 19h14"/>',
+    expense: '<path d="M12 5v14m6-6-6 6-6-6M5 5h14"/>',
+    transactions: '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
+    pending: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+    approved: '<circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/>',
+    bonus: '<path d="M20 12v9H4v-9m-2-5h20v5H2zm10 0v14m0-14H7.5a2.5 2.5 0 1 1 2.4-3.2L12 7Zm0 0h4.5a2.5 2.5 0 1 0-2.4-3.2L12 7Z"/>',
+    tasks: '<path d="m9 11 3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>',
+    procurement: '<path d="M3 7h11v11H3zM14 11h4l3 3v4h-7z"/><circle cx="7.5" cy="19" r="1.5"/><circle cx="17.5" cy="19" r="1.5"/>',
+    inventory: '<path d="m12 3 9 5-9 5-9-5 9-5Zm-9 9 9 5 9-5m-18 5 9 5 9-5M12 13v9"/>',
+    documents: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6M8 13h8m-8 4h8"/>',
+    arrow: '<path d="M5 12h14m-6-6 6 6-6 6"/>'
+  };
+  return `<svg class="dashboard-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || paths.tasks}</svg>`;
+}
+
+function renderDashboardQuickActions() {
+  const actionsByRole = {
+    DIREKTUR: [
+      { label: 'Tambah transaksi', view: 'finance', target: 'transactionForm', icon: 'transactions' },
+      { label: 'Tambah inventory', view: 'inventory', target: 'inventoryItemForm', icon: 'inventory' },
+      { label: 'Buat pengadaan', view: 'procurement', target: 'purchaseRequestForm', icon: 'procurement' },
+      { label: 'Tambah pekerjaan', view: 'tasks', target: 'taskForm', icon: 'tasks' },
+      { label: 'Upload dokumen', view: 'documents', target: 'documentForm', icon: 'documents' }
+    ],
+    MANAGER: [
+      { label: 'Tambah transaksi', view: 'finance', target: 'transactionForm', icon: 'transactions' },
+      { label: 'Tambah inventory', view: 'inventory', target: 'inventoryItemForm', icon: 'inventory' },
+      { label: 'Buat pengadaan', view: 'procurement', target: 'purchaseRequestForm', icon: 'procurement' }
+    ],
+    KARYAWAN: [
+      { label: 'Buat pengadaan', view: 'procurement', target: 'purchaseRequestForm', icon: 'procurement' }
+    ],
+    KOMISARIS: []
+  };
+  const actions = actionsByRole[state.user?.role] || [];
+  document.getElementById('directorQuickActions').hidden = actions.length === 0;
+  document.getElementById('dashboardQuickActions').innerHTML = actions.map((action) => `
+    <button class="quick-action" type="button" data-dashboard-action="${action.view}" data-dashboard-target="${action.target}">
+      <span class="quick-action-icon">${dashboardIcon(action.icon)}</span>
+      <span>${escapeHtml(action.label)}</span>${dashboardIcon('arrow')}
+    </button>
+  `).join('');
+  document.getElementById('exportExcelBtn').hidden = state.user?.role !== 'DIREKTUR';
+}
+
 function renderSummaryCards(data) {
   const summaryGrid = document.getElementById('summaryGrid');
   const isDirector = state.user?.role === 'DIREKTUR';
   const canViewFinance = ['DIREKTUR', 'MANAGER', 'KOMISARIS'].includes(state.user?.role);
   document.getElementById('companyDashboardContent').classList.toggle('hidden', !canViewFinance);
   document.getElementById('employeeDashboardNote').classList.toggle('hidden', canViewFinance);
-  document.getElementById('directorQuickActions').classList.toggle('hidden', !isDirector);
+  renderDashboardQuickActions();
   const cards = canViewFinance
     ? [
       { key: 'balance', label: 'Total Saldo', value: data?.summary?.balance ?? 0, format: 'currency' },
@@ -245,16 +303,28 @@ function renderSummaryCards(data) {
       { key: 'approvedTasks', label: 'Selesai disetujui', value: data?.summary?.approvedTasks ?? 0, format: 'number' }
     ];
 
-  summaryGrid.innerHTML = cards.map(card => {
+  const iconByKey = {
+    balance: 'balance', income: 'income', expense: 'expense', transactions: 'transactions',
+    pendingTasks: 'pending', approvedTasks: 'approved', bonuses: 'bonus',
+    assignedTasks: 'tasks', inProgressTasks: 'pending', waitingTasks: 'pending'
+  };
+  const toneByKey = {
+    balance: 'navy', income: 'green', expense: 'orange', transactions: 'slate',
+    pendingTasks: 'orange', approvedTasks: 'green', bonuses: 'green',
+    assignedTasks: 'navy', inProgressTasks: 'orange', waitingTasks: 'orange'
+  };
+  summaryGrid.innerHTML = cards.map((card) => {
     const value = card.format === 'currency' ? formatCompactCurrency(card.value) : card.value;
     return `
-      <button type="button" class="summary-card" data-dashboard-detail="${card.key}" aria-label="Lihat rincian: ${escapeHtml(card.label)}">
-        <span class="label">${escapeHtml(card.label)}</span>
-        <p class="value" title="${card.format === 'currency' ? escapeHtml(formatCurrency(card.value)) : ''}">${value}</p>
-        <span class="summary-card-hint">Lihat rincian <span aria-hidden="true">→</span></span>
+      <button type="button" class="summary-card metric-${toneByKey[card.key] || 'navy'}" data-dashboard-detail="${card.key}" aria-label="Lihat rincian: ${escapeHtml(card.label)}">
+        <span class="summary-card-top"><span class="label">${escapeHtml(card.label)}</span><span class="summary-icon">${dashboardIcon(iconByKey[card.key])}</span></span>
+        <strong class="value" title="${card.format === 'currency' ? escapeHtml(formatCurrency(card.value)) : ''}">${escapeHtml(value)}</strong>
+        <span class="summary-card-hint">Buka rincian ${dashboardIcon('arrow')}</span>
       </button>
     `;
   }).join('');
+  summaryGrid.setAttribute('aria-busy', 'false');
+  document.getElementById('dashboardAsOf').textContent = `Diperbarui ${new Intl.DateTimeFormat('id-ID', { hour: '2-digit', minute: '2-digit' }).format(new Date())}`;
 }
 
 function renderTransactionDetails(transactions, type) {
@@ -380,56 +450,146 @@ async function openIndicatorDetails(key) {
 
 function renderChart(data) {
   const chartBars = document.getElementById('chartBars');
-  const months = data?.monthlySummary || [];
-  const maxValue = Math.max(...months.flatMap(month => [month.income, month.expense]), 1);
+  const period = state.dashboardPeriod || 'monthly';
+  const now = new Date();
+  const buckets = [];
+  const dateKey = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  const mondayOf = (date) => {
+    const monday = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
+    return monday;
+  };
 
-  chartBars.innerHTML = months.map(month => `
-    <div class="bar-group">
-      <div class="bar income" title="Income ${escapeHtml(month.label)}" style="height: ${(month.income / maxValue) * 100}%"></div>
-      <div class="bar expense" title="Expense ${escapeHtml(month.label)}" style="height: ${(month.expense / maxValue) * 100}%"></div>
+  if (period === 'daily') {
+    for (let offset = 6; offset >= 0; offset -= 1) {
+      const date = new Date(now.getFullYear(), now.getMonth(), now.getDate() - offset);
+      buckets.push({ key: dateKey(date), label: date.toLocaleDateString('id-ID', { weekday: 'short' }), income: 0, expense: 0 });
+    }
+  } else if (period === 'weekly') {
+    const currentMonday = mondayOf(now);
+    for (let offset = 7; offset >= 0; offset -= 1) {
+      const date = new Date(currentMonday);
+      date.setDate(date.getDate() - (offset * 7));
+      buckets.push({ key: dateKey(date), label: date.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' }), income: 0, expense: 0 });
+    }
+  } else if (period === 'yearly') {
+    for (let offset = 4; offset >= 0; offset -= 1) {
+      const year = now.getFullYear() - offset;
+      buckets.push({ key: String(year), label: String(year), income: 0, expense: 0 });
+    }
+  } else {
+    for (let offset = 5; offset >= 0; offset -= 1) {
+      const date = new Date(now.getFullYear(), now.getMonth() - offset, 1);
+      const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+      buckets.push({ key, label: date.toLocaleDateString('id-ID', { month: 'short' }), income: 0, expense: 0 });
+    }
+  }
+
+  const transactions = (state.transactions.length ? state.transactions : data?.transactions || [])
+    .filter((transaction) => !transaction.archived_at);
+  for (const transaction of transactions) {
+    const datePart = String(transaction.date || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(datePart)) continue;
+    let key = datePart;
+    if (period === 'weekly') key = dateKey(mondayOf(new Date(`${datePart}T00:00:00`)));
+    if (period === 'monthly') key = datePart.slice(0, 7);
+    if (period === 'yearly') key = datePart.slice(0, 4);
+    const bucket = buckets.find((entry) => entry.key === key);
+    if (!bucket) continue;
+    if (transaction.type === 'income') bucket.income += Number(transaction.amount || 0);
+    if (transaction.type === 'expense') bucket.expense += Number(transaction.amount || 0);
+  }
+
+  if (period === 'monthly' && !transactions.length && data?.monthlySummary?.length) {
+    chartBars.style.gridTemplateColumns = `repeat(${data.monthlySummary.length}, minmax(0, 1fr))`;
+    chartBars.innerHTML = data.monthlySummary.map((month) => `
+      <div class="chart-column">
+        <div class="chart-bars-pair">
+          <span class="bar income" style="height:${Math.max(3, Number(month.income) / Math.max(...data.monthlySummary.flatMap((entry) => [Number(entry.income), Number(entry.expense)]), 1) * 100)}%" title="Pemasukan ${escapeHtml(month.label)}: ${formatCurrency(month.income)}"></span>
+          <span class="bar expense" style="height:${Math.max(3, Number(month.expense) / Math.max(...data.monthlySummary.flatMap((entry) => [Number(entry.income), Number(entry.expense)]), 1) * 100)}%" title="Pengeluaran ${escapeHtml(month.label)}: ${formatCurrency(month.expense)}"></span>
+        </div><span class="chart-period">${escapeHtml(month.label)}</span>
+      </div>
+    `).join('');
+    chartBars.setAttribute('aria-busy', 'false');
+    return;
+  }
+
+  chartBars.style.gridTemplateColumns = `repeat(${buckets.length}, minmax(0, 1fr))`;
+  const maxValue = Math.max(...buckets.flatMap((bucket) => [bucket.income, bucket.expense]), 1);
+  chartBars.innerHTML = buckets.map((bucket) => `
+    <div class="chart-column">
+      <div class="chart-bars-pair">
+        <span class="bar income" style="height:${Math.max(3, bucket.income / maxValue * 100)}%" title="Pemasukan ${escapeHtml(bucket.label)}: ${formatCurrency(bucket.income)}"></span>
+        <span class="bar expense" style="height:${Math.max(3, bucket.expense / maxValue * 100)}%" title="Pengeluaran ${escapeHtml(bucket.label)}: ${formatCurrency(bucket.expense)}"></span>
+      </div>
+      <span class="chart-period">${escapeHtml(bucket.label)}</span>
     </div>
-  `).join('');
-
-  const labels = months.map(month => `<div style="text-align:center; font-size:0.72rem; color:#64748b;">${escapeHtml(month.label)}</div>`).join('');
-  chartBars.insertAdjacentHTML('beforeend', `<div style="display:grid; grid-template-columns: repeat(${months.length}, minmax(42px, 1fr)); gap:10px; margin-top:12px;">${labels}</div>`);
+  `).join('') || '<p class="dashboard-empty">Belum ada data pada periode ini.</p>';
+  chartBars.setAttribute('aria-busy', 'false');
 }
 
 function renderMonthlySummary(data) {
   const target = document.getElementById('monthlySummary');
-  const rows = (data?.monthlySummary || []).map(month => `
-    <div class="table-row">
+  const months = data?.monthlySummary || [];
+  const rows = months.map((month) => `
+    <div class="monthly-summary-row">
       <span>${escapeHtml(month.label)}</span>
-      <span>${formatCurrency(month.income)}</span>
-      <span>${formatCurrency(month.expense)}</span>
+      <span class="amount-positive">${formatCurrency(month.income)}</span>
+      <span class="amount-negative">${formatCurrency(month.expense)}</span>
+      <strong>${formatCurrency(Number(month.income) - Number(month.expense))}</strong>
     </div>
   `).join('');
-
-  target.innerHTML = rows || '<p>Belum ada data.</p>';
+  const latest = months[months.length - 1];
+  target.innerHTML = `
+    <div class="monthly-summary-head"><span>Periode</span><span>Masuk</span><span>Keluar</span><span>Bersih</span></div>
+    ${rows || '<p class="dashboard-empty">Belum ada transaksi pada periode ini.</p>'}
+    ${latest ? `<div class="monthly-summary-net"><span>Saldo bersih ${escapeHtml(latest.label)}</span><strong>${formatCurrency(Number(latest.income) - Number(latest.expense))}</strong></div>` : ''}
+  `;
 }
 
 function renderRecentTransactions(transactions) {
   const target = document.getElementById('recentTransactions');
-  const rows = (transactions || []).map(tx => `
-    <div class="table-row">
-      <span>${escapeHtml(tx.project_name)}</span>
-      <span><span class="tag ${tx.type}">${tx.type === 'income' ? 'Pemasukan' : 'Pengeluaran'}</span></span>
-      <span>${formatCurrency(tx.amount)}</span>
-      <span>${new Date(tx.date).toLocaleDateString('id-ID')}</span>
-    </div>
+  const rows = (transactions || []).slice(0, 5).map((transaction) => `
+    <article class="dashboard-data-row">
+      <span class="dashboard-row-icon ${transaction.type === 'income' ? 'row-income' : 'row-expense'}">${dashboardIcon(transaction.type === 'income' ? 'income' : 'expense')}</span>
+      <span class="dashboard-row-main"><strong>${escapeHtml(transaction.project_name || transaction.category || 'Transaksi')}</strong><small>${escapeHtml(transaction.category || '-')} · ${new Date(transaction.date).toLocaleDateString('id-ID')}</small></span>
+      <strong class="dashboard-row-amount ${transaction.type === 'income' ? 'amount-positive' : 'amount-negative'}">${formatCurrency(transaction.amount)}</strong>
+    </article>
   `).join('');
-  target.innerHTML = rows || '<p>Belum ada transaksi.</p>';
+  target.innerHTML = rows || '<p class="dashboard-empty">Belum ada transaksi.</p>';
 }
 
 function renderRecentActivity(activities) {
   const target = document.getElementById('recentActivity');
-  const rows = (activities || []).map(activity => `
-    <div class="activity-row">
-      <span>${escapeHtml(activity.user_name || 'Sistem')}</span>
-      <span>${escapeHtml(activity.action)}</span>
-      <span>${new Date(activity.created_at).toLocaleString('id-ID')}</span>
-    </div>
+  const rows = (activities || []).slice(0, 5).map((activity) => `
+    <article class="dashboard-data-row">
+      <span class="dashboard-row-icon row-neutral">${dashboardIcon('transactions')}</span>
+      <span class="dashboard-row-main"><strong>${escapeHtml(activity.action)}</strong><small>${escapeHtml(activity.user_name || 'Sistem')} · ${new Date(activity.created_at).toLocaleString('id-ID')}</small></span>
+    </article>
   `).join('');
-  target.innerHTML = rows || '<p>Tidak ada aktivitas.</p>';
+  target.innerHTML = rows || '<p class="dashboard-empty">Belum ada aktivitas.</p>';
+}
+
+function renderDashboardTasks(tasks = []) {
+  const statusLabels = { pending: 'Berjalan', in_review: 'Menunggu pemeriksaan', approved: 'Disetujui', rejected: 'Perlu perbaikan' };
+  const rows = tasks.slice(0, 4).map((task) => `
+    <button class="dashboard-compact-row" type="button" data-dashboard-open="tasks">
+      <span class="dashboard-compact-copy"><strong>${escapeHtml(task.title)}</strong><small>${escapeHtml(task.assignee_name || 'Pekerjaan tim')}</small></span>
+      <span class="dashboard-compact-status status-${escapeHtml(task.status)}">${escapeHtml(statusLabels[task.status] || task.status)}</span>
+    </button>
+  `).join('');
+  document.getElementById('dashboardTasks').innerHTML = rows || '<p class="dashboard-empty">Belum ada pekerjaan.</p>';
+}
+
+function renderDashboardProcurement(requests = []) {
+  const statusLabels = { submitted: 'Menunggu', under_review: 'Ditinjau', approved: 'Disetujui', rejected: 'Ditolak', converted_to_po: 'Menjadi PO', cancelled: 'Dibatalkan' };
+  const rows = requests.slice(0, 4).map((request) => `
+    <button class="dashboard-compact-row" type="button" data-dashboard-open="procurement">
+      <span class="dashboard-compact-copy"><strong>${escapeHtml(request.request_number)}</strong><small>${escapeHtml(request.category)} · ${formatCurrency(request.total_estimate)}</small></span>
+      <span class="dashboard-compact-status status-${escapeHtml(request.status)}">${escapeHtml(statusLabels[request.status] || request.status)}</span>
+    </button>
+  `).join('');
+  document.getElementById('dashboardProcurement').innerHTML = rows || '<p class="dashboard-empty">Belum ada pengadaan.</p>';
 }
 
 function renderFinanceTable(transactions) {
@@ -1081,7 +1241,7 @@ function applyRolePermissions() {
 
   document.querySelectorAll('.nav-btn').forEach((button) => {
     const isAllowed = allowed.includes(button.dataset.view);
-    button.style.display = isAllowed ? 'block' : 'none';
+    button.hidden = !isAllowed;
   });
 
   const financeView = document.getElementById('financeView');
@@ -1104,7 +1264,6 @@ function applyRolePermissions() {
   document.querySelectorAll('[data-director-only]').forEach((section) => {
     section.hidden = !isDirector;
   });
-  document.getElementById('directorQuickActions').classList.toggle('hidden', !isDirector);
   document.getElementById('companyDashboardContent').classList.toggle('hidden', !['DIREKTUR', 'MANAGER', 'KOMISARIS'].includes(role));
   document.getElementById('employeeDashboardNote').classList.toggle('hidden', ['DIREKTUR', 'MANAGER', 'KOMISARIS'].includes(role));
 
@@ -1168,8 +1327,11 @@ function setCurrentView(view) {
     users: 'Pengguna',
     audit: 'Audit'
   }[safeView];
+  document.getElementById('pageBreadcrumb').textContent = pageTitle.textContent;
 
   state.currentView = safeView;
+  document.getElementById('dashboardScreen').classList.remove('menu-open');
+  syncSidebarToggleState();
   if (safeView === 'fieldMonitoring') {
     setFieldTab(state.fieldTab || (role === 'KARYAWAN' ? 'activity' : 'dashboard'));
   }
@@ -1219,6 +1381,8 @@ async function loadDashboard() {
   renderRecentActivity(data.activities || []);
   renderFinanceTable(state.transactions);
   renderTaskTable(state.tasks);
+  renderDashboardTasks(state.tasks);
+  renderDashboardProcurement(state.procurement?.requests || []);
 }
 
 async function loadUsers() {
@@ -1257,6 +1421,7 @@ async function loadFinance() {
   const transactions = await apiFetch('/api/transactions');
   state.transactions = transactions;
   renderFinanceTable(transactions);
+  renderChart(state.dashboardData);
 }
 
 async function loadInventory() {
@@ -1275,6 +1440,7 @@ async function loadProcurement() {
   try {
     const data = await apiFetch('/api/procurement');
     renderProcurement(data);
+    renderDashboardProcurement(data.requests || []);
   } catch (error) {
     const message = document.getElementById('procurementLoadMessage');
     message.hidden = false;
@@ -1483,9 +1649,20 @@ async function loadFieldReports(query = '') {
   renderFieldReports();
 }
 
+function renderTopbarNotificationBadge(notifications) {
+  const unreadCount = notifications.filter((notification) => !notification.read_at).length;
+  const badge = document.getElementById('notificationBadge');
+  badge.textContent = unreadCount > 9 ? '9+' : String(unreadCount);
+  badge.hidden = unreadCount === 0;
+  document.getElementById('notificationButton').setAttribute(
+    'aria-label', unreadCount ? `${unreadCount} notifikasi belum dibaca` : 'Tidak ada notifikasi baru'
+  );
+}
+
 async function loadFieldNotifications() {
   const notifications = await apiFetch('/api/field-monitoring/notifications');
   state.fieldNotifications = notifications;
+  renderTopbarNotificationBadge(notifications);
   const unread = notifications.filter((notification) => !notification.read_at);
   document.getElementById('fieldMonitoringNotifications').innerHTML = unread.length
     ? `<div class="field-notification-banner"><strong>${unread.length} notifikasi belum dibaca</strong>${unread.slice(0, 5).map((notification) => `<button type="button" data-read-field-notification="${Number(notification.id)}">${escapeHtml(notification.message)} <span>${formatFieldDate(notification.created_at)}</span></button>`).join('')}</div>`
@@ -1940,6 +2117,85 @@ document.getElementById('toggleFieldArchive').addEventListener('click', async (e
     await loadFieldReports(getFieldFilterQuery());
   } catch (error) {
     alert(error.message);
+  }
+});
+
+const sidebarToggle = document.getElementById('sidebarToggle');
+const dashboardScreenElement = document.getElementById('dashboardScreen');
+function syncSidebarToggleState() {
+  const isMobileNavigation = window.matchMedia('(max-width: 1023px)').matches;
+  const isOpen = dashboardScreenElement.classList.contains('menu-open');
+  const isCollapsed = dashboardScreenElement.classList.contains('sidebar-collapsed');
+  sidebarToggle.setAttribute('aria-expanded', String(isMobileNavigation ? isOpen : !isCollapsed));
+  sidebarToggle.setAttribute('aria-label', isMobileNavigation
+    ? isOpen ? 'Tutup navigasi' : 'Buka navigasi'
+    : isCollapsed ? 'Perluas navigasi' : 'Ciutkan navigasi');
+}
+
+sidebarToggle.addEventListener('click', () => {
+  if (window.matchMedia('(max-width: 1023px)').matches) {
+    dashboardScreenElement.classList.toggle('menu-open');
+    syncSidebarToggleState();
+    return;
+  }
+  dashboardScreenElement.classList.toggle('sidebar-collapsed');
+  syncSidebarToggleState();
+});
+
+document.getElementById('sidebarBackdrop').addEventListener('click', () => {
+  dashboardScreenElement.classList.remove('menu-open');
+  syncSidebarToggleState();
+});
+
+const profileToggle = document.getElementById('profileToggle');
+const profileDropdown = document.getElementById('profileDropdown');
+profileToggle.addEventListener('click', () => {
+  const isOpen = profileToggle.getAttribute('aria-expanded') === 'true';
+  profileToggle.setAttribute('aria-expanded', String(!isOpen));
+  profileDropdown.hidden = isOpen;
+});
+
+document.addEventListener('click', (event) => {
+  if (event.target.closest('.account-menu')) return;
+  profileToggle.setAttribute('aria-expanded', 'false');
+  profileDropdown.hidden = true;
+});
+
+document.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape') return;
+  profileToggle.setAttribute('aria-expanded', 'false');
+  profileDropdown.hidden = true;
+  dashboardScreenElement.classList.remove('menu-open');
+  syncSidebarToggleState();
+});
+
+document.getElementById('notificationButton').addEventListener('click', () => {
+  state.fieldTab = 'activity';
+  setCurrentView('fieldMonitoring');
+});
+
+document.querySelectorAll('[data-dashboard-period]').forEach((button) => {
+  button.addEventListener('click', () => {
+    state.dashboardPeriod = button.dataset.dashboardPeriod;
+    document.querySelectorAll('[data-dashboard-period]').forEach((periodButton) => {
+      periodButton.classList.toggle('active', periodButton === button);
+    });
+    renderChart(state.dashboardData);
+  });
+});
+
+document.addEventListener('click', (event) => {
+  const dashboardAction = event.target.closest('[data-dashboard-action], [data-dashboard-open]');
+  if (!dashboardAction) return;
+  const view = dashboardAction.dataset.dashboardAction || dashboardAction.dataset.dashboardOpen;
+  const targetId = dashboardAction.dataset.dashboardTarget;
+  setCurrentView(view);
+  if (targetId) {
+    window.requestAnimationFrame(() => {
+      const target = document.getElementById(targetId);
+      target?.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
+      target?.querySelector('input:not([type="hidden"]), select, textarea')?.focus({ preventScroll: true });
+    });
   }
 });
 
